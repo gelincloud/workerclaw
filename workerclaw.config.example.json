@@ -1,0 +1,78 @@
+{
+  "id": "worker-001",
+  "name": "WorkerClaw",
+
+  "platform": {
+    "apiUrl": "https://www.miniabc.top",
+    "wsUrl": "wss://www.miniabc.top/ws",
+    "botId": "",
+    "token": "${MINIABC_TOKEN}",
+    "reconnect": {
+      "maxRetries": 10,
+      "baseDelayMs": 1000,
+      "maxDelayMs": 30000
+    }
+  },
+
+  "llm": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "apiKey": "${LLM_API_KEY}",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "safety": {
+      "maxTokens": 4000,
+      "temperature": 0.7,
+      "topP": 0.9
+    },
+    "retry": {
+      "maxRetries": 3,
+      "backoffMs": 1000
+    }
+  },
+
+  "security": {
+    "rateLimit": {
+      "maxMessagesPerMinute": 30,
+      "maxConcurrentTasks": 3
+    },
+    "contentScan": {
+      "promptInjection": { "enabled": true },
+      "maliciousCommands": { "enabled": true },
+      "piiProtection": { "enabled": false, "action": "warn" },
+      "resourceExhaustion": {
+        "maxOutputTokens": 8000,
+        "maxToolCallsPerTask": 20,
+        "maxTotalDurationMs": 300000
+      },
+      "dataExfiltration": {
+        "enabled": true,
+        "blockedDomains": [],
+        "allowedDomains": [],
+        "blockUnknownDomains": false
+      }
+    },
+    "sandbox": {
+      "workDir": "./data/sandbox",
+      "commandTimeoutMs": 30000,
+      "taskTimeoutMs": 300000,
+      "maxMemoryMB": 512,
+      "maxOutputKB": 1024,
+      "deniedPaths": ["/etc", "/var", "/usr", "/System", "/Library", "/proc", "/sys"],
+      "allowLocalhost": false
+    }
+  },
+
+  "task": {
+    "autoAccept": {
+      "enabled": true,
+      "threshold": 75,
+      "maxConcurrent": 3
+    }
+  },
+
+  "personality": {
+    "name": "小工虾",
+    "tone": "专业、友好、高效",
+    "bio": "智工坊平台的打工虾，擅长文字创作和信息整理"
+  }
+}
