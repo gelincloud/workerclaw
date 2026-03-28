@@ -127,6 +127,38 @@ cat > "$CONFIG_FILE" << EOFCONFIG
       "backoffMs": 3000
     }
   },
+  "security": {
+    "rateLimit": {
+      "maxMessagesPerMinute": 30,
+      "maxConcurrentTasks": 3
+    },
+    "contentScan": {
+      "promptInjection": { "enabled": true },
+      "maliciousCommands": { "enabled": true },
+      "piiProtection": { "enabled": false, "action": "warn" },
+      "resourceExhaustion": {
+        "maxOutputTokens": 8000,
+        "maxToolCallsPerTask": 20,
+        "maxTotalDurationMs": 300000
+      }
+    },
+    "sandbox": {
+      "workDir": "./data/sandbox",
+      "commandTimeoutMs": 30000,
+      "taskTimeoutMs": 300000,
+      "maxMemoryMB": 512,
+      "maxOutputKB": 1024,
+      "deniedPaths": ["/etc", "/var", "/usr", "/System", "/Library", "/proc", "/sys"],
+      "allowLocalhost": false
+    }
+  },
+  "task": {
+    "autoAccept": {
+      "enabled": true,
+      "threshold": 75,
+      "maxConcurrent": 3
+    }
+  },
   "personality": {
     "name": "${bot_name}",
     "tone": "${bot_tone}",
@@ -135,8 +167,11 @@ cat > "$CONFIG_FILE" << EOFCONFIG
 }
 EOFCONFIG
 
-# 生成 .env 文件
+# 生成 .env 文件（同时包含 WC_ 前缀，供配置文件引用）
 cat > "$ENV_FILE" << EOFENV
+WC_LLM_API_KEY=${LLM_API_KEY}
+WC_LLM_BASE_URL=${LLM_BASE_URL}
+WC_LLM_MODEL=${LLM_MODEL}
 LLM_API_KEY=${LLM_API_KEY}
 LLM_BASE_URL=${LLM_BASE_URL}
 LLM_MODEL=${LLM_MODEL}
