@@ -258,6 +258,27 @@ export class TaskManager {
         break;
       }
 
+      case 'chat_message': {
+        const chatMsg = message.payload;
+        if (!chatMsg) {
+          this.logger.debug('聊天消息缺少 payload 数据', { type: msgType });
+          return;
+        }
+
+        // 不回复自己的消息
+        if (chatMsg.botId === this.config.platform.botId) {
+          return;
+        }
+
+        this.logger.info(`💬 收到聊天室消息: ${chatMsg.author?.nickname || chatMsg.botId}: ${chatMsg.content?.substring(0, 50)}`);
+
+        // 异步处理聊天回复（不阻塞消息循环）
+        this.handleChatMessageReply(chatMsg).catch(err => {
+          this.logger.error('聊天回复异常', err);
+        });
+        break;
+      }
+
       default:
         this.logger.debug('未处理的交互消息', { type: msgType });
         break;
@@ -630,6 +651,61 @@ export class TaskManager {
       }
     } catch (err) {
       this.logger.error('私信回复处理异常', err);
+    }
+  }
+
+  /**
+   * 处理公共聊天室消息回复
+   * 使用 LLM 生成自然回复，支持 @提及和闲聊
+   */
+  private async handleChatMessageReply(chatMsg: any): Promise<void> {
+    try {
+      const personality = this.config.personality;
+      const senderName = chatMsg.author?.nickname || `用户${(chatMsg.botId || '').substring(0, 6)}`;
+      const content = chatMsg.content || '';
+      const botId = this.config.platform.botId;
+
+      // 检查是否 @ 了自己（内容包含 botId 或 bot 名称）
+      const botName = personality.name || '打工虾';
+      const isMentioned = content.includes(botId) ||
+        content.includes(`@${botName}`) ||
+        content.includes(botName);
+
+      // 只回复被 @ 的消息或包含自己名字的消息
+      // 纯闲聊消息不回复，避免刷屏
+      if (!isMentioned) {
+        this.logger.debug('聊天消息未 @ 自己，跳过回复');
+        return;
+      }
+
+      // 构建 LLM prompt
+      const systemPrompt = personality.customSystemPrompt ||
+        `你是${botName}，智工坊平台上的一名打工虾，语气${personality.tone || '友好热情'}。` +
+        (personality.bio ? `\n简介：${personality.bio}` : '') +
+        `\n\n【聊天室回复规则】
+- 你在公共聊天室中，所有人都能看到你的回复，所以保持简洁有趣。
+- 回复自然、友好，1-3句话即可。
+- 如果有人问你能做什么，简要介绍能力，建议对方发任务给你。
+- 如果有人直接给你任务（不是在聊天室里问），引导对方通过私信或发单给你。
+- 只输出回复内容，不要加引号或前缀。`;
+
+      const result = await this.agentEngine.generateReply(
+        systemPrompt,
+        `聊天室里 ${senderName} 说：${content}`,
+      );
+
+      if (result) {
+        const sendResult = await this.platformApi.sendChatMessage(result);
+        if (sendResult.success) {
+          this.logger.info(`💬 已回复聊天室 → ${senderName}: ${result.substring(0, 50)}`);
+        } else {
+          this.logger.warn(`💬 聊天室回复失败`, { error: sendResult.error });
+        }
+      } else {
+        this.logger.debug('聊天室回复为空，跳过回复');
+      }
+    } catch (err) {
+      this.logger.error('聊天室回复处理异常', err);
     }
   }
 

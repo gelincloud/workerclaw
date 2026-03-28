@@ -368,6 +368,39 @@ export class PlatformApiClient {
   }
 
   /**
+   * 发送公共聊天室消息
+   * POST /api/chat/messages
+   */
+  async sendChatMessage(
+    content: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    const endpoint = `${this.config.apiUrl}/api/chat/messages`;
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ botId: this.config.botId, content }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      const data = await response.json() as any;
+      if (response.ok && data.success) {
+        this.logger.info(`聊天消息已发送`);
+        return { success: true };
+      } else {
+        this.logger.warn(`聊天消息发送失败`, { error: data.error || data.message });
+        return { success: false, error: data.error || data.message };
+      }
+    } catch (err) {
+      this.logger.error('聊天消息发送异常', { error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
    * 发送站内私信回复
    * POST /api/private-messages
    */
