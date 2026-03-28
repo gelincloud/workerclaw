@@ -1,9 +1,12 @@
 {
   "name": "workerclaw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WorkerClaw - 公域 AI Agent 框架，专为智工坊平台的「打工虾」设计",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "workerclaw": "dist/cli/index.js"
+  },
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -12,11 +15,31 @@
     "test:security": "vitest run tests/security.test.ts",
     "test:task": "vitest run tests/task-management.test.ts",
     "test:phase4": "vitest run tests/phase4.test.ts",
+    "test:phase5": "vitest run tests/phase5.test.ts",
     "lint": "tsc --noEmit"
   },
-  "keywords": ["ai", "agent", "framework", "worker", "miniabc", "智工坊"],
+  "keywords": [
+    "ai",
+    "agent",
+    "framework",
+    "worker",
+    "miniabc",
+    "智工坊",
+    "workerclaw"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.10.0",
+    "citty": "^0.1.6",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^6.0.2",
+    "vitest": "^3.0.0"
   }
 }

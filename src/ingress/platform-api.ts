@@ -16,14 +16,52 @@ export interface PlatformApiClientConfig {
   platform: PlatformConfig;
 }
 
+/** Agent 注册参数 */
+export interface RegisterAgentParams {
+  /** Agent ID */
+  agentId: string;
+  /** Agent 名称 */
+  agentName?: string;
+  /** 能力列表 */
+  capabilities: string[];
+  /** 是否自动发欢迎推文 */
+  autoPostTweet?: boolean;
+}
+
+/** Agent 注册结果 */
+export interface RegisterAgentResult {
+  success: boolean;
+  botId?: string;
+  token?: string;
+  nickname?: string;
+  email?: string;
+  error?: string;
+}
+
+/** Bot 信息 */
+export interface BotInfo {
+  botId: string;
+  nickname: string;
+  email?: string;
+  level?: number;
+  activeDays?: number;
+}
+
 export class PlatformApiClient {
   private logger = createLogger('PlatformAPI');
   private eventBus: EventBus;
   private config: PlatformConfig;
 
-  constructor(config: PlatformApiClientConfig, eventBus: EventBus) {
-    this.config = config.platform;
-    this.eventBus = eventBus;
+  constructor(config: PlatformApiClientConfig, eventBus: EventBus);
+  constructor(platform: PlatformConfig, eventBus?: EventBus);
+  constructor(config: PlatformApiClientConfig | PlatformConfig, eventBus?: EventBus) {
+    if ('platform' in config) {
+      this.config = config.platform;
+      this.eventBus = eventBus!;
+    } else {
+      this.config = config;
+      this.eventBus = eventBus || new EventBus();
+    }
   }
 
   /**
@@ -122,6 +160,87 @@ export class PlatformApiClient {
   }
 
   /**
+   * Agent 注册
+   * 调用平台 API 自动创建 Agent 账户
+   */
+  async registerAgent(params: RegisterAgentParams): Promise<RegisterAgentResult> {
+    const endpoint = `${this.config.apiUrl}/api/openclaw/register`;
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      const data = await response.json() as any;
+
+      if (response.ok && (data.success || data.data)) {
+        return {
+          success: true,
+          botId: data.botId || data.data?.botId,
+          token: data.token || data.data?.token,
+          nickname: data.nickname || data.data?.nickname,
+          email: data.email || data.data?.email,
+        };
+      } else {
+        return {
+          success: false,
+          error: data.error || data.message || `HTTP ${response.status}`,
+        };
+      }
+    } catch (err) {
+      return {
+        success: false,
+        error: (err as Error).message,
+      };
+    }
+  }
+
+  /**
+   * 获取 Bot 信息
+   */
+  async getBotInfo(botId?: string): Promise<BotInfo | null> {
+    const id = botId || this.config.botId;
+    const endpoint = `${this.config.apiUrl}/bots/${id}`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return null;
+      return await response.json() as BotInfo;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 测试连接（验证 token 有效性）
+   */
+  async testConnection(): Promise<{ success: boolean; botId?: string }> {
+    try {
+      const response = await this.request(
+        `${this.config.apiUrl}/heartbeat`,
+        'POST',
+        {
+          botId: this.config.botId,
+          timestamp: new Date().toISOString(),
+        },
+      );
+
+      if (response.ok) {
+        return { success: true, botId: this.config.botId };
+      }
+
+      return { success: false };
+    } catch {
+      return { success: false };
+    }
+  }
+
+  /**
    * 通用 HTTP 请求方法
    */
   private async request(
@@ -131,14 +250,22 @@ export class PlatformApiClient {
   ): Promise<Response> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.config.token}`,
     };
 
-    return fetch(url, {
+    if (this.config.token) {
+      headers['Authorization'] = `Bearer ${this.config.token}`;
+    }
+
+    const options: RequestInit = {
       method,
       headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10000), // 10s 请求超时
-    });
+      signal: AbortSignal.timeout(10000),
+    };
+
+    if (body !== undefined && method !== 'GET') {
+      options.body = JSON.stringify(body);
+    }
+
+    return fetch(url, options);
   }
 }
