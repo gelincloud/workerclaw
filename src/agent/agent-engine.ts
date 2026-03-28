@@ -358,6 +358,11 @@ export class AgentEngine {
 
   /**
    * 处理单个工具调用
+   *
+   * 路由策略：
+   * 1. 先查 SkillRegistry 是否提供了该工具的执行器（如 BrowserSkill）
+   * 2. 再走内置 ToolExecutor（如 web_search, write_file）
+   * 3. 都没有则返回工具不可用
    */
   private async handleToolCall(
     toolCall: ToolCall,
@@ -376,24 +381,32 @@ export class AgentEngine {
       // 解析参数
       const params = JSON.parse(argsStr || '{}');
 
-      // 执行工具
-      const toolCallObj: ToolCall = {
-        id,
-        name,
-        arguments: argsStr,
+      const toolContext = {
+        taskId: task.taskId,
+        permissionLevel: context.permissionLevel,
+        workDir: this.config.security.sandbox.workDir,
+        remainingMs: context.timeoutMs - (Date.now() - context.receivedAt),
+        toolCallCount: 0,
+        maxToolCalls: 20,
       };
 
-      const result = await this.toolExecutor.execute(
-        toolCallObj,
-        {
-          taskId: task.taskId,
-          permissionLevel: context.permissionLevel,
-          workDir: this.config.security.sandbox.workDir,
-          remainingMs: context.timeoutMs - (Date.now() - context.receivedAt),
-          toolCallCount: 0,
-          maxToolCalls: 20,
-        },
-      );
+      let result: { success: boolean; content: string; error?: string };
+
+      // 路由 1: 查技能执行器
+      const skillExecutor = this.skillRegistry.getToolExecutor(name);
+      if (skillExecutor) {
+        this.logger.debug(`工具路由到技能: ${name} (skill: ${skillExecutor.skillName})`);
+        const toolResult = await skillExecutor.executor(params, { ...toolContext, toolCallId: id } as any);
+        result = {
+          success: toolResult.success,
+          content: toolResult.content,
+          error: toolResult.error,
+        };
+      } else {
+        // 路由 2: 走内置 ToolExecutor
+        const toolCallObj: ToolCall = { id, name, arguments: argsStr };
+        result = await this.toolExecutor.execute(toolCallObj, toolContext);
+      }
 
       this.eventBus.emit(WorkerClawEvent.TOOL_COMPLETED, {
         taskId: task.taskId,

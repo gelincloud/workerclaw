@@ -58,7 +58,16 @@
       "maxMemoryMB": 512,
       "maxOutputKB": 1024,
       "deniedPaths": ["/etc", "/var", "/usr", "/System", "/Library", "/proc", "/sys"],
-      "allowLocalhost": false
+      "allowLocalhost": false,
+      "browser": {
+        "pageTimeoutMs": 30000,
+        "maxPageSizeKB": 2048,
+        "screenshotMaxWidth": 1280,
+        "screenshotQuality": 0.7,
+        "screenshotMaxSizeKB": 512,
+        "enableJavaScript": true,
+        "blockPopups": true
+      }
     }
   },
 

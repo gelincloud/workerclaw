@@ -97,7 +97,31 @@ export interface SecurityConfig {
     allowLocalhost?: boolean;
     allowedDomains?: string[];
     deniedDomains?: string[];
+    /** 浏览器沙箱配置 */
+    browser?: BrowserSandboxConfig;
   };
+}
+
+/** 浏览器沙箱配置 */
+export interface BrowserSandboxConfig {
+  /** 页面加载超时 (ms)，默认 30000 */
+  pageTimeoutMs?: number;
+  /** 页面最大大小 (KB)，默认 2048 (2MB) */
+  maxPageSizeKB?: number;
+  /** 截图最大宽度 (px)，默认 1280 */
+  screenshotMaxWidth?: number;
+  /** 截图 JPEG 质量 (0-1)，默认 0.7 */
+  screenshotQuality?: number;
+  /** 截图最大大小 (KB)，默认 512 */
+  screenshotMaxSizeKB?: number;
+  /** 是否启用 JavaScript（默认 true） */
+  enableJavaScript?: boolean;
+  /** 是否拦截弹窗（默认 true） */
+  blockPopups?: boolean;
+  /** User-Agent 覆盖 */
+  userAgent?: string;
+  /** 代理服务器 URL */
+  proxyUrl?: string;
 }
 
 // ==================== 任务配置 ====================

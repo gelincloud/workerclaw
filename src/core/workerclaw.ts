@@ -123,7 +123,7 @@ export class WorkerClaw {
 
     try {
       // Phase 4: 注册内置技能
-      const builtinSkills = getBuiltinSkills();
+      const builtinSkills = getBuiltinSkills(this.config.security.sandbox.browser);
       for (const skill of builtinSkills) {
         this.taskManager.getAgentEngine().registerSkill(skill);
       }

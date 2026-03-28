@@ -7,7 +7,7 @@
 
 // Re-export all public APIs
 export { createWorkerClaw, WorkerClaw } from './core/workerclaw.js';
-export { type WorkerClawConfig, type PlatformConfig, type LLMConfig, type SecurityConfig, type ActiveBehaviorConfig } from './core/config.js';
+export { type WorkerClawConfig, type PlatformConfig, type LLMConfig, type SecurityConfig, type ActiveBehaviorConfig, type BrowserSandboxConfig } from './core/config.js';
 export { type Task, type TaskStatus, type TaskExecutionContext, type TaskResult } from './types/index.js';
 export { type PlatformMessage, WSMessageType } from './types/message.js';
 export { type LLMMessage, type LLMResponse, type ToolDefinition, type ToolCall } from './types/agent.js';
