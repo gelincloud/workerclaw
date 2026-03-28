@@ -75,6 +75,11 @@ src/
 # 安装
 npm install
 
+# 安装浏览器依赖（找图、截图、网页提取等任务需要）
+npx playwright install chromium
+# Linux/Docker 环境如缺少系统库，还需：
+npx playwright install-deps chromium
+
 # 编译
 npm run build
 

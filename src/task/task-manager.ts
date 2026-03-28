@@ -1067,6 +1067,18 @@ export class TaskManager {
         reported,
       });
 
+      // 释放服务端接单状态（cancelTake）
+      try {
+        const cancelResult = await this.platformApi.cancelTake(taskId);
+        if (cancelResult.success) {
+          this.logger.info(`✅ 已释放接单状态 [${taskId}]`);
+        } else {
+          this.logger.warn(`释放接单状态失败 [${taskId}]`, { error: cancelResult.error });
+        }
+      } catch (err) {
+        this.logger.debug(`释放接单状态异常 [${taskId}]`, { error: (err as Error).message });
+      }
+
       // v2: 成果质量失败时通知发单人
       if (result.qualityIssue) {
         this.notifyQualityFailure(task, result).catch(err => {

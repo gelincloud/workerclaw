@@ -5,12 +5,18 @@
  * - 页面加载超时控制
  * - 响应大小限制
  * - 弹窗拦截
- * - Cookie 隔离（每次操作独立上下文）
+ * - Cookie 隔离（同一 taskId 内共享 session，跨任务隔离）
  * - 资源限制（截图质量/大小）
  * - URL 安全验证（阻止内网/危险协议）
+ *
+ * 架构：
+ * - BrowserSessionManager 管理共享 Browser 进程 + 按任务隔离的 Context
+ * - 同一任务的多次操作复用同一 Context（保持登录态/Cookie）
+ * - 不同任务之间 Context 完全隔离
  */
 
 import { createLogger, type Logger } from '../core/logger.js';
+import { BrowserSessionManager, type BrowserSessionConfig } from './browser-session.js';
 import type { BrowserSandboxConfig } from '../core/config.js';
 
 // ==================== 默认配置 ====================
@@ -86,10 +92,34 @@ export interface ScreenshotResult {
 export class BrowserSandbox {
   private logger: Logger;
   private config: typeof DEFAULT_CONFIG & BrowserSandboxConfig;
+  private sessionManager: BrowserSessionManager;
 
   constructor(browserConfig?: BrowserSandboxConfig) {
     this.config = { ...DEFAULT_CONFIG, ...browserConfig };
     this.logger = createLogger('BrowserSandbox');
+
+    // 初始化会话管理器
+    const sessionConfig: BrowserSessionConfig = {
+      launchArgs: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--no-first-run',
+        '--disable-default-apps',
+      ],
+      userAgent: this.config.userAgent,
+      proxyUrl: this.config.proxyUrl,
+    };
+    this.sessionManager = new BrowserSessionManager(sessionConfig);
+  }
+
+  /**
+   * 获取会话管理器（供 AgentEngine 调用销毁会话）
+   */
+  getSessionManager(): BrowserSessionManager {
+    return this.sessionManager;
   }
 
   /**
@@ -120,66 +150,37 @@ export class BrowserSandbox {
 
   /**
    * 导航到指定 URL 并提取页面内容
+   *
+   * @param url 目标 URL
+   * @param options 导航选项
+   * @param taskId 任务 ID（用于会话隔离，同一 taskId 内保持登录态）
    */
   async navigate(url: string, options?: {
     waitFor?: string;
     extractText?: boolean;
     screenshot?: boolean;
     workDir?: string;
-  }): Promise<NavigateResult> {
+  }, taskId?: string): Promise<NavigateResult> {
     // URL 安全验证
     const urlCheck = this.validateUrl(url);
     if (!urlCheck.allowed) {
       return { success: false, title: '', url, content: '', error: urlCheck.reason };
     }
 
-    // 动态导入 playwright
-    let chromium: any;
-    try {
-      const pw = await import('playwright');
-      chromium = pw.chromium;
-    } catch {
-      return {
-        success: false,
-        title: '',
-        url,
-        content: '',
-        error: 'playwright 未安装或 Chromium 不可用。请运行: npx playwright install chromium',
-      };
-    }
+    // 无 taskId 时使用默认隔离 key（向后兼容）
+    const sessionKey = taskId || '__no_session__';
 
-    let browser: any = null;
-    let context: any = null;
     let page: any = null;
+    let needsCleanup = false;
 
     try {
-      // 启动浏览器（每次操作独立实例，确保隔离）
-      browser = await chromium.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-extensions',
-          '--no-first-run',
-          '--disable-default-apps',
-        ],
-      });
-
-      context = await browser.newContext({
-        userAgent: this.config.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        javaScriptEnabled: this.config.enableJavaScript,
-        ignoreHTTPSErrors: true,
-        viewport: { width: this.config.screenshotMaxWidth, height: 720 },
-        proxy: this.config.proxyUrl ? { server: this.config.proxyUrl } : undefined,
-      });
-
-      page = await context.newPage();
+      const session = await this.sessionManager.getOrCreate(sessionKey);
+      page = await session.context.newPage();
+      needsCleanup = true;
 
       // 拦截弹窗
       if (this.config.blockPopups) {
-        context.on('page', (p: any) => p.close().catch(() => {}));
+        session.context.on('page', (p: any) => p.close().catch(() => {}));
       }
 
       // 导航
@@ -196,10 +197,7 @@ export class BrowserSandbox {
       const status = response.status();
       if (status >= 400) {
         return {
-          success: false,
-          title: '',
-          url,
-          content: '',
+          success: false, title: '', url, content: '',
           error: `HTTP ${status}: ${response.statusText()}`,
         };
       }
@@ -208,10 +206,7 @@ export class BrowserSandbox {
       const contentLength = response.headers()['content-length'];
       if (contentLength && parseInt(contentLength) > this.config.maxPageSizeKB * 1024) {
         return {
-          success: false,
-          title: '',
-          url,
-          content: '',
+          success: false, title: '', url, content: '',
           error: `页面过大 (${Math.round(parseInt(contentLength) / 1024)}KB)，超过限制 ${this.config.maxPageSizeKB}KB`,
         };
       }
@@ -282,54 +277,43 @@ export class BrowserSandbox {
       const error = err as Error;
       this.logger.error('页面导航失败', { url, error: error.message });
       return {
-        success: false,
-        title: '',
-        url,
-        content: '',
+        success: false, title: '', url, content: '',
         error: error.message.includes('Timeout')
           ? `页面加载超时 (${this.config.pageTimeoutMs}ms)`
           : error.message,
       };
     } finally {
-      // 确保清理资源
-      try {
-        if (page) await page.close().catch(() => {});
-        if (context) await context.close().catch(() => {});
-        if (browser) await browser.close().catch(() => {});
-      } catch {
-        // 清理失败不影响返回
+      // 只关闭 page，不关闭 context 和 browser（保持会话）
+      if (page && needsCleanup) {
+        try { await page.close().catch(() => {}); } catch {}
+      }
+      // 无 taskId 的一次性会话，立即销毁
+      if (!taskId) {
+        try { await this.sessionManager.destroy(sessionKey); } catch {}
       }
     }
   }
 
   /**
    * 提取页面结构化数据（链接、图片、元数据）
+   *
+   * @param url 目标 URL
+   * @param taskId 任务 ID（用于会话隔离）
    */
-  async extractStructured(url: string): Promise<ExtractResult> {
+  async extractStructured(url: string, taskId?: string): Promise<ExtractResult> {
     const urlCheck = this.validateUrl(url);
     if (!urlCheck.allowed) {
       return { success: false, url, title: '', text: '', links: [], images: [], meta: {}, error: urlCheck.reason };
     }
 
-    let chromium: any;
-    try {
-      const pw = await import('playwright');
-      chromium = pw.chromium;
-    } catch {
-      return { success: false, url, title: '', text: '', links: [], images: [], meta: {}, error: 'playwright 不可用' };
-    }
-
-    let browser: any = null;
-    let context: any = null;
+    const sessionKey = taskId || '__no_session__';
     let page: any = null;
+    let needsCleanup = false;
 
     try {
-      browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-      context = await browser.newContext({
-        userAgent: this.config.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        ignoreHTTPSErrors: true,
-      });
-      page = await context.newPage();
+      const session = await this.sessionManager.getOrCreate(sessionKey);
+      page = await session.context.newPage();
+      needsCleanup = true;
 
       const response = await page.goto(url, {
         timeout: this.config.pageTimeoutMs,
@@ -338,13 +322,7 @@ export class BrowserSandbox {
 
       if (!response || response.status() >= 400) {
         return {
-          success: false,
-          url,
-          title: '',
-          text: '',
-          links: [],
-          images: [],
-          meta: {},
+          success: false, url, title: '', text: '', links: [], images: [], meta: {},
           error: `HTTP ${response?.status() || '无响应'}`,
         };
       }
@@ -389,56 +367,44 @@ export class BrowserSandbox {
     } catch (err) {
       const error = err as Error;
       return {
-        success: false,
-        url,
-        title: '',
-        text: '',
-        links: [],
-        images: [],
-        meta: {},
+        success: false, url, title: '', text: '', links: [], images: [], meta: {},
         error: error.message,
       };
     } finally {
-      try {
-        if (page) await page.close().catch(() => {});
-        if (context) await context.close().catch(() => {});
-        if (browser) await browser.close().catch(() => {});
-      } catch {}
+      if (page && needsCleanup) {
+        try { await page.close().catch(() => {}); } catch {}
+      }
+      if (!taskId) {
+        try { await this.sessionManager.destroy(sessionKey); } catch {}
+      }
     }
   }
 
   /**
    * 截取页面截图
+   *
+   * @param url 目标 URL
+   * @param workDir 工作目录
+   * @param options 截图选项
+   * @param taskId 任务 ID（用于会话隔离）
    */
   async takeScreenshot(url: string, workDir?: string, options?: {
     fullPage?: boolean;
     selector?: string;
-  }): Promise<ScreenshotResult> {
+  }, taskId?: string): Promise<ScreenshotResult> {
     const urlCheck = this.validateUrl(url);
     if (!urlCheck.allowed) {
       return { success: false, path: '', width: 0, height: 0, sizeKB: 0, error: urlCheck.reason };
     }
 
-    let chromium: any;
-    try {
-      const pw = await import('playwright');
-      chromium = pw.chromium;
-    } catch {
-      return { success: false, path: '', width: 0, height: 0, sizeKB: 0, error: 'playwright 不可用' };
-    }
-
-    let browser: any = null;
-    let context: any = null;
+    const sessionKey = taskId || '__no_session__';
     let page: any = null;
+    let needsCleanup = false;
 
     try {
-      browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-      context = await browser.newContext({
-        userAgent: this.config.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        ignoreHTTPSErrors: true,
-        viewport: { width: this.config.screenshotMaxWidth, height: 720 },
-      });
-      page = await context.newPage();
+      const session = await this.sessionManager.getOrCreate(sessionKey);
+      page = await session.context.newPage();
+      needsCleanup = true;
 
       await page.goto(url, {
         timeout: this.config.pageTimeoutMs,
@@ -460,12 +426,20 @@ export class BrowserSandbox {
       const error = err as Error;
       return { success: false, path: '', width: 0, height: 0, sizeKB: 0, error: error.message };
     } finally {
-      try {
-        if (page) await page.close().catch(() => {});
-        if (context) await context.close().catch(() => {});
-        if (browser) await browser.close().catch(() => {});
-      } catch {}
+      if (page && needsCleanup) {
+        try { await page.close().catch(() => {}); } catch {}
+      }
+      if (!taskId) {
+        try { await this.sessionManager.destroy(sessionKey); } catch {}
+      }
     }
+  }
+
+  /**
+   * 关闭所有会话和浏览器（框架退出时调用）
+   */
+  async close(): Promise<void> {
+    await this.sessionManager.destroyAll();
   }
 
   /**

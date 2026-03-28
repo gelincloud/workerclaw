@@ -187,11 +187,20 @@ export class AgentEngine {
           contentPreview: content.slice(0, 200),
         });
 
+        // 尝试自动降级执行（LLM 没用工具，但任务需要工具）
+        if (finalResponse.toolCallRounds === 0) {
+          this.logger.info(`🔧 尝试自动降级执行 [${task.taskId}]（LLM 未使用工具，自动调用工具补救）`);
+          const fallbackResult = await this.tryAutoRemediation(task, context, qualityCheck.reason || '');
+          if (fallbackResult) {
+            return fallbackResult;
+          }
+        }
+
         return {
           taskId: task.taskId,
           status: 'failed',
           error: `成果质量未通过: ${qualityCheck.reason}`,
-          durationMs,
+          durationMs: Date.now() - startTime,
           qualityIssue: qualityCheck.reason,
         };
       }
@@ -262,6 +271,18 @@ export class AgentEngine {
       // 标记会话完成
       this.sessionManager.completeSession(task.taskId);
       this.currentExecutingTaskId = null;
+
+      // 销毁浏览器会话（释放 BrowserContext 资源）
+      const browserSkill = this.skillRegistry.getSkill('browser');
+      if (browserSkill && typeof (browserSkill as any).destroyTaskSession === 'function') {
+        try {
+          await (browserSkill as any).destroyTaskSession(task.taskId);
+        } catch (err) {
+          this.logger.debug(`销毁浏览器会话失败 [${task.taskId}]`, {
+            error: (err as Error).message,
+          });
+        }
+      }
     }
   }
 
@@ -871,8 +892,310 @@ export class AgentEngine {
   }
 
   /**
-   * 检测 LLM 回复是否为"无法完成"类拒绝
+   * 自动降级执行：当 LLM 没有使用工具但任务需要时，自动调用工具补救
+   *
+   * 场景：LLM 不支持 function calling 或忽视了工具引导，
+   * 导致 toolCallRounds=0 但任务需要实际操作（如找图、搜索）。
+   *
+   * 策略：
+   * - 找图任务 → 自动 browser_extract → browser_navigate(screenshot)
+   * - 搜索任务 → 自动 web_search
    */
+  private async tryAutoRemediation(
+    task: Task,
+    context: TaskExecutionContext,
+    qualityReason: string,
+  ): Promise<TaskResult | null> {
+    const desc = (task.title + ' ' + task.description).toLowerCase();
+    const startTime = Date.now();
+
+    // 判断任务类型
+    const imageKeywords = [
+      '找.*图', '搜索.*图', '下载.*图', '帮我.*图',
+      '图片', '照片', '壁纸', '头像', '背景图',
+      '风景图', '太空图', '星空图', '大海', '夕阳', 'sunset',
+    ];
+    const searchKeywords = ['搜一下', '查一下', '帮我找', '帮我查', '搜索', '查找', '百度', '谷歌'];
+    const needsImage = imageKeywords.some(kw => new RegExp(kw, 'i').test(desc));
+    const needsSearch = searchKeywords.some(kw => desc.includes(kw));
+
+    if (!needsImage && !needsSearch) {
+      return null;
+    }
+
+    try {
+      if (needsImage) {
+        // 自动找图降级方案
+        const result = await this.autoFindImage(task, context);
+        if (result) {
+          return {
+            ...result,
+            durationMs: Date.now() - startTime,
+          };
+        }
+      }
+
+      if (needsSearch) {
+        // 自动搜索降级方案
+        const result = await this.autoSearch(task, context);
+        if (result) {
+          return {
+            ...result,
+            durationMs: Date.now() - startTime,
+          };
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`自动降级执行失败 [${task.taskId}]`, { error: (err as Error).message });
+    }
+
+    return null;
+  }
+
+  /**
+   * 自动找图：直接调用 browser_extract 和 browser_navigate 找图截图
+   */
+  private async autoFindImage(
+    task: Task,
+    context: TaskExecutionContext,
+  ): Promise<TaskResult | null> {
+    const taskId = task.taskId;
+    const desc = task.title + ' ' + task.description;
+
+    // 1. 从任务描述中提取搜索关键词
+    const searchQuery = this.extractSearchQuery(desc);
+    if (!searchQuery) {
+      this.logger.warn(`无法从任务描述中提取搜索关键词 [${taskId}]`);
+      return null;
+    }
+
+    this.logger.info(`🔍 自动找图 [${taskId}] 关键词: "${searchQuery}"`);
+
+    // 2. 尝试 browser_extract 从免费图库提取图片
+    const imageUrl = await this.autoBrowserExtractImage(searchQuery, context);
+    if (!imageUrl) {
+      // 3. 尝试直接用 browser_navigate 截图
+      this.logger.info(`尝试直接截图 [${taskId}]`);
+      const screenshotUrl = await this.autoBrowserScreenshot(searchQuery, context);
+      if (screenshotUrl) {
+        return {
+          taskId,
+          status: 'completed',
+          content: `为您找到了"${searchQuery}"相关的图片，已截图保存。`,
+          outputs: [{
+            type: 'image',
+            content: screenshotUrl,
+            name: `${searchQuery}_截图.jpg`,
+          }],
+          durationMs: 0,
+        };
+      }
+
+      // 降级：返回搜索建议
+      this.logger.warn(`自动找图失败 [${taskId}]，浏览器工具可能不可用`);
+      return null;
+    }
+
+    // 4. 尝试对图片 URL 截图
+    const screenshotPath = await this.autoBrowserScreenshotUrl(imageUrl, context);
+    if (screenshotPath) {
+      return {
+        taskId,
+        status: 'completed',
+        content: `为您找到了"${searchQuery}"相关的图片！图片已截图保存。\n\n图片来源: ${imageUrl.slice(0, 100)}`,
+        outputs: [{
+          type: 'image',
+          content: screenshotPath,
+          name: `${searchQuery}.jpg`,
+        }],
+        durationMs: 0,
+      };
+    }
+
+    // 降级：返回图片 URL
+    return {
+      taskId,
+      status: 'completed',
+      content: `为您找到了"${searchQuery}"相关的图片！\n\n图片链接: ${imageUrl}\n\n您可以点击链接查看或下载图片。`,
+      outputs: [],
+      durationMs: 0,
+    };
+  }
+
+  /**
+   * 自动搜索：直接调用 web_search 搜索信息
+   */
+  private async autoSearch(
+    task: Task,
+    context: TaskExecutionContext,
+  ): Promise<TaskResult | null> {
+    const taskId = task.taskId;
+    const desc = task.title + ' ' + task.description;
+
+    const searchQuery = this.extractSearchQuery(desc);
+    if (!searchQuery) {
+      return null;
+    }
+
+    this.logger.info(`🔍 自动搜索 [${taskId}] 关键词: "${searchQuery}"`);
+
+    // 尝试调用 web_search 工具
+    const toolCall: ToolCall = {
+      id: `auto-${Date.now()}`,
+      name: 'web_search',
+      arguments: JSON.stringify({ query: searchQuery }),
+    };
+
+    try {
+      const toolResult = await this.handleToolCall(toolCall, task, context);
+      if (toolResult.success && toolResult.content) {
+        return {
+          taskId,
+          status: 'completed',
+          content: toolResult.content,
+          outputs: [],
+          durationMs: 0,
+        };
+      }
+    } catch (err) {
+      this.logger.warn(`web_search 工具调用失败 [${taskId}]`, { error: (err as Error).message });
+    }
+
+    return null;
+  }
+
+  /**
+   * 从任务描述中提取搜索关键词
+   */
+  private extractSearchQuery(desc: string): string {
+    // 提取引号中的内容
+    const quotedMatch = desc.match(/[""「]([^""」]+)[""」]/);
+    if (quotedMatch) return quotedMatch[1];
+
+    // 提取"帮我找/搜索"后面的内容
+    const actionMatch = desc.match(/(?:帮我找|帮我搜|搜索|查找|找一?张?|下载)\s*(.+)/i);
+    if (actionMatch) return actionMatch[1].replace(/[。，.！!？?]+$/, '').trim().slice(0, 30);
+
+    // 使用任务标题作为关键词（去掉"帮我"等前缀）
+    const cleanTitle = desc.replace(/^(帮我|请帮我|能不能|可以)/, '').trim().slice(0, 30);
+    if (cleanTitle.length >= 2) return cleanTitle;
+
+    return '';
+  }
+
+  /**
+   * 自动调用 browser_extract 从图库提取图片 URL
+   */
+  private async autoBrowserExtractImage(
+    query: string,
+    context: TaskExecutionContext,
+  ): Promise<string | null> {
+    // 尝试几个免费图库
+    const sources = [
+      `https://unsplash.com/s/photos/${encodeURIComponent(query)}`,
+      `https://www.pexels.com/search/${encodeURIComponent(query)}`,
+    ];
+
+    for (const url of sources) {
+      try {
+        const toolCall: ToolCall = {
+          id: `auto-extract-${Date.now()}`,
+          name: 'browser_extract',
+          arguments: JSON.stringify({ url }),
+        };
+
+        const result = await this.handleToolCall(toolCall, {
+          taskId: 'auto',
+          taskType: 'other',
+          title: query,
+          description: '',
+        } as Task, context);
+
+        if (result.success && result.content) {
+          // 从提取结果中找图片 URL
+          const imgUrlMatch = result.content.match(/https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|gif|webp)/i);
+          if (imgUrlMatch) {
+            this.logger.info(`找到图片 URL: ${imgUrlMatch[0].slice(0, 80)}...`);
+            return imgUrlMatch[0];
+          }
+        }
+      } catch (err) {
+        this.logger.debug(`browser_extract 失败: ${url}`, { error: (err as Error).message });
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 自动调用 browser_navigate 截图
+   */
+  private async autoBrowserScreenshot(
+    query: string,
+    context: TaskExecutionContext,
+  ): Promise<string | null> {
+    try {
+      const url = `https://unsplash.com/s/photos/${encodeURIComponent(query)}`;
+      const toolCall: ToolCall = {
+        id: `auto-screenshot-${Date.now()}`,
+        name: 'browser_navigate',
+        arguments: JSON.stringify({ url, screenshot: true }),
+      };
+
+      const result = await this.handleToolCall(toolCall, {
+        taskId: 'auto',
+        taskType: 'other',
+        title: query,
+        description: '',
+      } as Task, context);
+
+      if (result.success && result.content) {
+        // 从结果中提取截图文件路径
+        const pathMatch = result.content.match(/(?:截图已保存|📸|保存)[：:\s]*(\S+\.(?:jpg|jpeg|png|gif|webp))/i);
+        if (pathMatch && fs.existsSync(pathMatch[1])) {
+          return pathMatch[1];
+        }
+      }
+    } catch (err) {
+      this.logger.debug(`browser_navigate 截图失败`, { error: (err as Error).message });
+    }
+
+    return null;
+  }
+
+  /**
+   * 对图片 URL 截图
+   */
+  private async autoBrowserScreenshotUrl(
+    imageUrl: string,
+    context: TaskExecutionContext,
+  ): Promise<string | null> {
+    try {
+      const toolCall: ToolCall = {
+        id: `auto-img-screenshot-${Date.now()}`,
+        name: 'browser_navigate',
+        arguments: JSON.stringify({ url: imageUrl, screenshot: true }),
+      };
+
+      const result = await this.handleToolCall(toolCall, {
+        taskId: 'auto',
+        taskType: 'other',
+        title: '截图',
+        description: '',
+      } as Task, context);
+
+      if (result.success && result.content) {
+        const pathMatch = result.content.match(/(?:截图已保存|📸|保存)[：:\s]*(\S+\.(?:jpg|jpeg|png|gif|webp))/i);
+        if (pathMatch && fs.existsSync(pathMatch[1])) {
+          return pathMatch[1];
+        }
+      }
+    } catch (err) {
+      this.logger.debug(`图片截图失败`, { error: (err as Error).message });
+    }
+
+    return null;
+  }
   private isRefusalResponse(content: string): boolean {
     if (!content || content.length < 10) return false;
     const lower = content.toLowerCase();
