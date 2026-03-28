@@ -101,7 +101,7 @@ export class PlatformApiClient {
    * POST /api/task/:id/submit
    * 服务端实际接口: { submitterId, content, attachments }
    */
-  async submitWork(taskId: string, content: string): Promise<boolean> {
+  async submitWork(taskId: string, content: string, attachments: string[] = []): Promise<boolean> {
     const endpoint = `${this.config.apiUrl}/api/task/${taskId}/submit`;
 
     try {
@@ -113,11 +113,13 @@ export class PlatformApiClient {
       const response = await this.request(endpoint, 'POST', {
         submitterId: this.config.botId,
         content,
-        attachments: [],
+        attachments,
       });
 
       if (response.ok) {
-        this.logger.info(`任务成果提交成功 [${taskId}]`);
+        this.logger.info(`任务成果提交成功 [${taskId}]`, {
+          attachmentsCount: attachments.length,
+        });
         return true;
       } else {
         const errorText = await response.text().catch(() => 'unknown');
@@ -145,10 +147,114 @@ export class PlatformApiClient {
   }
 
   /**
-   * 上报任务结果（兼容旧接口，内部调用 submitWork）
+   * 上传文件到平台 COS
+   * POST /api/cos/upload
+   * body: { filedata: base64, filename, filetype }
+   * 返回: { success, url, key }
+   */
+  async uploadFile(fileData: string, filename: string, filetype: string): Promise<{ success: boolean; url: string; key: string } | null> {
+    const endpoint = `${this.config.apiUrl}/api/cos/upload`;
+
+    try {
+      const response = await this.request(endpoint, 'POST', {
+        filedata: fileData,
+        filename,
+        filetype,
+      });
+
+      if (response.ok) {
+        const data = await response.json() as any;
+        if (data.success && data.url) {
+          this.logger.info(`文件上传成功: ${filename} → ${data.url.slice(0, 80)}...`);
+          return { success: true, url: data.url, key: data.key || '' };
+        }
+      }
+
+      const errorText = await response.text().catch(() => 'unknown');
+      this.logger.warn(`文件上传失败: ${filename}`, { error: errorText.slice(0, 200) });
+      return null;
+    } catch (err) {
+      this.logger.error(`文件上传异常: ${filename}`, { error: (err as Error).message });
+      return null;
+    }
+  }
+
+  /**
+   * 提交带文件附件的任务成果（先上传文件，再提交）
+   */
+  async submitWorkWithFiles(
+    taskId: string,
+    content: string,
+    files: Array<{ data: string; name: string; type: string }>,
+  ): Promise<boolean> {
+    if (files.length === 0) {
+      return this.submitWork(taskId, content);
+    }
+
+    // 并行上传所有文件
+    const uploadResults = await Promise.all(
+      files.map(f => this.uploadFile(f.data, f.name, f.type)),
+    );
+
+    // 收集成功的 URL
+    const urls = uploadResults
+      .filter((r): r is { success: true; url: string; key: string } => r !== null && r.success)
+      .map(r => r.url);
+
+    this.logger.info(`文件上传完成 [${taskId}]`, {
+      total: files.length,
+      success: urls.length,
+    });
+
+    return this.submitWork(taskId, content, urls);
+  }
+
+  /**
+   * 上报任务结果（内部调用 submitWork，支持文件附件）
    */
   async reportResult(taskId: string, result: TaskResult): Promise<boolean> {
     if (result.status === 'completed' && result.content) {
+      // 如果有文件产出，先上传再提交
+      const fileOutputs = (result.outputs || []).filter(o => o.type === 'image' || o.type === 'file');
+      if (fileOutputs.length > 0) {
+        this.logger.info(`任务 [${taskId}] 包含 ${fileOutputs.length} 个文件附件，开始上传...`);
+        const fs = await import('fs');
+        const path = await import('path');
+
+        const uploadFiles: Array<{ data: string; name: string; type: string }> = [];
+        for (const output of fileOutputs) {
+          try {
+            const filePath = output.content;
+            if (!fs.existsSync(filePath)) {
+              this.logger.warn(`文件不存在，跳过: ${filePath}`);
+              continue;
+            }
+            const fileBuffer = fs.readFileSync(filePath);
+            const base64 = fileBuffer.toString('base64');
+            const ext = path.extname(filePath).slice(1).toLowerCase();
+            const mimeMap: Record<string, string> = {
+              jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+              gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+              pdf: 'application/pdf', txt: 'text/plain', csv: 'text/csv',
+              json: 'application/json', html: 'text/html', md: 'text/markdown',
+              mp4: 'video/mp4', mp3: 'audio/mpeg', wav: 'audio/wav',
+              doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            };
+            const mime = output.mimeType || mimeMap[ext] || 'application/octet-stream';
+            const name = output.name || path.basename(filePath);
+            uploadFiles.push({ data: base64, name, type: mime });
+          } catch (err) {
+            this.logger.warn(`文件读取失败: ${output.content}`, { error: (err as Error).message });
+          }
+        }
+
+        if (uploadFiles.length > 0) {
+          return this.submitWorkWithFiles(taskId, result.content, uploadFiles);
+        }
+      }
+
       return this.submitWork(taskId, result.content);
     }
 

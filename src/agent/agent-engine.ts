@@ -33,6 +33,8 @@ import type {
 import type { PersonalityConfig } from './personality.js';
 import type { ExperienceManager } from '../experience/index.js';
 import type { ExperienceSearchResult } from '../experience/types.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface AgentEngineConfig {
   llm: LLMConfig;
@@ -65,6 +67,9 @@ export class AgentEngine {
 
   /** 当前任务的经验搜索结果（executeTask 中预搜索） */
   private currentTaskExperience: ExperienceSearchResult | null = null;
+
+  /** 当前正在执行的任务 ID（用于 buildOutputs 收集文件） */
+  private currentExecutingTaskId: string | null = null;
 
   constructor(config: AgentEngineConfig, eventBus: EventBus, experienceManager?: ExperienceManager) {
     this.config = config;
@@ -117,6 +122,9 @@ export class AgentEngine {
     });
 
     this.eventBus.emit(WorkerClawEvent.TASK_STARTED, { taskId: task.taskId });
+
+    // 记录当前执行的任务 ID
+    this.currentExecutingTaskId = task.taskId;
 
     // 预搜索任务相关经验（在构建 prompt 前）
     await this.preSearchExperience(task);
@@ -236,6 +244,7 @@ export class AgentEngine {
     } finally {
       // 标记会话完成
       this.sessionManager.completeSession(task.taskId);
+      this.currentExecutingTaskId = null;
     }
   }
 
@@ -436,7 +445,7 @@ export class AgentEngine {
   }
 
   /**
-   * 构建系统提示（人格 + 技能 + 权限 + 经验策略）
+   * 构建系统提示（人格 + 技能 + 权限 + 经验策略 + 文件产出引导）
    */
   private buildSystemPrompt(task: Task, context: TaskExecutionContext): string {
     const availableTools = this.toolExecutor.getRegistry().getToolNames();
@@ -463,6 +472,12 @@ export class AgentEngine {
       if (expAddon) {
         result += '\n\n' + expAddon;
       }
+    }
+
+    // 附加文件产出引导（根据任务类型判断是否需要生成文件）
+    const fileGuidance = this.buildFileGuidance(task);
+    if (fileGuidance) {
+      result += '\n\n' + fileGuidance;
     }
 
     return result;
@@ -501,6 +516,43 @@ export class AgentEngine {
         ? '\n✅ 此策略已验证有效，优先参考。'
         : '',
     ].filter(Boolean).join('\n');
+  }
+
+  /**
+   * 根据任务描述判断是否需要生成文件，并构建引导提示
+   */
+  private buildFileGuidance(task: Task): string {
+    const desc = (task.title + ' ' + task.description).toLowerCase();
+
+    // 判断是否是需要生成文件的任务
+    const fileKeywords = [
+      '图片', '照片', '截图', '壁纸', '头像', '背景图',
+      '下载.*图', '找.*图', '搜索.*图', '百度.*图',
+      '风景图', '大海', ' sunset', ' sunset',
+      '生成.*图', '画.*图', 'AI.*画', 'AI.*图',
+      '文档', '报告', '表格', '数据',
+      'PPT', '幻灯片', '演示文稿',
+      '音频', '视频',
+    ];
+
+    const needsFile = fileKeywords.some(kw => new RegExp(kw, 'i').test(desc));
+    if (!needsFile) return '';
+
+    return [
+      '## 📎 文件产出要求',
+      '此任务需要生成具体文件作为成果（图片、文档等），不能只回复文字说明。',
+      '',
+      '执行方式：',
+      '1. 如果需要图片：使用 web_search 工具搜索相关图片 URL，然后用 download 或 write_file 工具将图片保存到本地',
+      '2. 如果需要文档/报告：使用 write_file 工具将内容写入文件（.md, .txt, .csv, .html 等）',
+      '3. 如果需要数据分析结果：使用 write_file 写入 CSV/JSON 格式的数据文件',
+      '',
+      '⚠️ 重要：',
+      '- 最终回复中应该包含对生成文件的说明',
+      '- 图片文件请保存为 .png 或 .jpg 格式',
+      '- 文件路径使用沙箱工作目录下的路径',
+      '- 系统会自动将你生成的文件作为附件提交给发单人',
+    ].join('\n');
   }
 
   /**
@@ -568,10 +620,69 @@ export class AgentEngine {
   }
 
   /**
-   * 构建任务输出
+   * 构建任务输出（从会话历史中收集文件产出）
    */
   private buildOutputs(content: string): TaskOutput[] {
-    return [{ type: 'text', content }];
+    const outputs: TaskOutput[] = [{ type: 'text', content }];
+
+    // 从会话历史中扫描文件产出
+    try {
+      const fitted = this.sessionManager.getFittedMessages(this.currentExecutingTaskId || '');
+      const messages = fitted.messages || (Array.isArray(fitted) ? fitted : []);
+      if (!messages || messages.length === 0) return outputs;
+
+      const collectedFiles = new Set<string>();
+
+      for (const msg of messages) {
+        // 扫描 tool 角色的消息（write_file 等）
+        if (msg.role !== 'tool') continue;
+
+        const msgContent = msg.content || '';
+
+        // 识别 write_file 工具产出的文件
+        if (msg.name === 'write_file' || msgContent.includes('write_file')) {
+          // 尝试从工具结果中提取文件路径
+          const pathMatch = msgContent.match(/["']([^"']+\.(?:jpg|jpeg|png|gif|webp|svg|pdf|txt|csv|json|html|md|mp3|mp4|wav|docx?|xlsx?|pptx?))["']/i);
+          if (pathMatch) {
+            const filePath = pathMatch[1];
+            if (fs.existsSync(filePath) && !collectedFiles.has(filePath)) {
+              collectedFiles.add(filePath);
+              const ext = path.extname(filePath).slice(1).toLowerCase();
+              const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext);
+              outputs.push({
+                type: isImage ? 'image' : 'file',
+                content: filePath,
+                name: path.basename(filePath),
+              });
+            }
+          }
+        }
+
+        // 识别包含文件路径的内容（通用模式）
+        const genericFileMatch = msgContent.match(/(?:文件已保存|已写入|已保存到?|saved|written to)[^\n]*(\/?[^\s"']+\.(?:jpg|jpeg|png|gif|webp|pdf|txt|csv|json|html|md|mp3|mp4|wav))/i);
+        if (genericFileMatch) {
+          const filePath = genericFileMatch[1];
+          if (fs.existsSync(filePath) && !collectedFiles.has(filePath)) {
+            collectedFiles.add(filePath);
+            const ext = path.extname(filePath).slice(1).toLowerCase();
+            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext);
+            outputs.push({
+              type: isImage ? 'image' : 'file',
+              content: filePath,
+              name: path.basename(filePath),
+            });
+          }
+        }
+      }
+
+      if (outputs.length > 1) {
+        this.logger.info(`收集到 ${outputs.length - 1} 个文件产出`);
+      }
+    } catch {
+      // 收集失败不影响主流程
+    }
+
+    return outputs;
   }
 
   /**
