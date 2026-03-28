@@ -151,11 +151,31 @@ export class AgentEngine {
 
       // 构建结果
       const durationMs = Date.now() - startTime;
+      const content = finalResponse.content;
+
+      // 输出质量审核：检测"无法完成"类回复
+      if (this.isRefusalResponse(content)) {
+        this.logger.warn(`任务执行返回拒绝类回复 [${task.taskId}]`, {
+          contentPreview: content.slice(0, 200),
+        });
+        this.eventBus.emit(WorkerClawEvent.TASK_FAILED, {
+          taskId: task.taskId,
+          error: new Error('Agent 无法完成任务: ' + content.slice(0, 100)),
+        });
+
+        return {
+          taskId: task.taskId,
+          status: 'failed',
+          error: 'Agent 表示无法完成此任务',
+          durationMs,
+        };
+      }
+
       const result: TaskResult = {
         taskId: task.taskId,
         status: 'completed',
-        content: finalResponse.content,
-        outputs: this.buildOutputs(finalResponse.content),
+        content,
+        outputs: this.buildOutputs(content),
         tokensUsed: finalResponse.usage ? {
           prompt: finalResponse.usage.promptTokens,
           completion: finalResponse.usage.completionTokens,
@@ -552,6 +572,50 @@ export class AgentEngine {
    */
   private buildOutputs(content: string): TaskOutput[] {
     return [{ type: 'text', content }];
+  }
+
+  /**
+   * 检测 LLM 回复是否为"无法完成"类拒绝
+   */
+  private isRefusalResponse(content: string): boolean {
+    if (!content || content.length < 10) return false;
+    const lower = content.toLowerCase();
+    // 中英文拒绝模式
+    const refusalPatterns = [
+      /无法(完成|执行|处理|下载|访问|帮你)/,
+      /做不到/,
+      /无法满足/,
+      /能力不足/,
+      /没有.*权限/,
+      /不具备.*能力/,
+      /无法.*提供/,
+      /超出.*能力/,
+      /暂时无法/,
+      /目前无法/,
+      /我无法/,
+      /i (can'?t|cannot|am unable to)/,
+      /not (capable|able|possible)/,
+      /beyond (my|the) (capability|scope|abilities)/,
+      /don'?t have (access|permission|the ability)/,
+      /unable to (complete|fulfill|perform|handle|process)/,
+      /cannot (complete|fulfill|perform|handle|process)/,
+    ];
+    // 需要匹配至少 2 个模式才算拒绝（避免误判）
+    let matchCount = 0;
+    for (const pattern of refusalPatterns) {
+      if (pattern.test(lower)) {
+        matchCount++;
+        if (matchCount >= 2) return true;
+      }
+    }
+    // 或者内容很短且包含关键拒绝词
+    if (content.length < 100) {
+      const shortRefusal = [/无法/, /做不到/, /i can'?t/i, /unable to/i];
+      for (const p of shortRefusal) {
+        if (p.test(lower)) return true;
+      }
+    }
+    return false;
   }
 
   /**

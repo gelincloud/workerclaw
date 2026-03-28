@@ -61,6 +61,11 @@ export class TaskManager {
   /** 经验管理器（由外部注入） */
   private experienceManager: ExperienceManager | null = null;
 
+  // 消息去重（type + senderId + contentHash → 时间戳）
+  private recentMessageKeys = new Map<string, number>();
+  private dedupTTL = 60_000; // 60秒内相同消息视为重复
+  private dedupCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
   // 超时管理
   private taskTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -110,12 +115,34 @@ export class TaskManager {
     );
 
     this.logger = createLogger('TaskManager');
+
+    // 启动去重缓存定期清理
+    this.dedupCleanupTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, ts] of this.recentMessageKeys) {
+        if (now - ts > this.dedupTTL) {
+          this.recentMessageKeys.delete(key);
+        }
+      }
+    }, 30_000); // 每30秒清理一次
   }
 
   /**
    * 处理平台消息
    */
   async handleMessage(message: any): Promise<void> {
+    // 0. 消息去重
+    const dedupKey = this.buildDedupKey(message);
+    if (dedupKey) {
+      const now = Date.now();
+      const lastSeen = this.recentMessageKeys.get(dedupKey);
+      if (lastSeen && now - lastSeen < this.dedupTTL) {
+        this.logger.debug('重复消息已忽略', { type: message.type, key: dedupKey.slice(0, 50) });
+        return;
+      }
+      this.recentMessageKeys.set(dedupKey, now);
+    }
+
     // 1. 安全检查
     const securityResult = await this.securityGate.check(message);
     if (!securityResult.passed) {
@@ -415,16 +442,23 @@ export class TaskManager {
 
     switch (result) {
       case 'started': {
+        const permLevel = this.determinePermissionLevel(task);
         this.stateMachine.transition(task.taskId, 'accepted', evaluation.reason);
         this.stateMachine.transition(task.taskId, 'running');
-
-        const permLevel = this.determinePermissionLevel(task);
         this.stateMachine.setPermissionLevel(task.taskId, permLevel);
 
         this.eventBus.emit(WorkerClawEvent.TASK_ACCEPTED, { taskId: task.taskId });
 
-        // 接单：调用服务端 /api/task/:id/take
-        this.platformApi.takeTask(task.taskId).catch(() => {});
+        // 接单：await 服务端确认，失败则回滚
+        const taken = await this.platformApi.takeTask(task.taskId);
+        if (!taken) {
+          this.logger.warn(`接单失败，放弃任务 [${task.taskId}]`);
+          this.stateMachine.transition(task.taskId, 'rejected', '接单失败（任务已被接取或已结束）');
+          this.eventBus.emit(WorkerClawEvent.TASK_REJECTED, { taskId: task.taskId, reason: '接单失败' });
+          this.concurrency.taskFinished(task.taskId);
+          this.stateMachine.cleanup(task.taskId);
+          break;
+        }
 
         // 设置任务超时
         this.setTaskTimeout(task);
@@ -480,7 +514,17 @@ export class TaskManager {
       this.stateMachine.setPermissionLevel(task.taskId, permLevel);
 
       this.eventBus.emit(WorkerClawEvent.TASK_ACCEPTED, { taskId: task.taskId });
-      this.platformApi.takeTask(task.taskId).catch(() => {});
+
+      // 接单：await 确认
+      const taken = await this.platformApi.takeTask(task.taskId);
+      if (!taken) {
+        this.logger.warn(`接单失败，放弃延迟任务 [${task.taskId}]`);
+        this.stateMachine.transition(task.taskId, 'rejected', '接单失败');
+        this.concurrency.taskFinished(task.taskId);
+        this.stateMachine.cleanup(task.taskId);
+        return;
+      }
+
       this.setTaskTimeout(task);
 
       this.executeTask(task, permLevel).catch(err => {
@@ -725,6 +769,40 @@ export class TaskManager {
   }
 
   /**
+   * 构建去重 key（type + 核心标识）
+   */
+  private buildDedupKey(message: any): string | null {
+    const type = message.type;
+    // 心跳和系统消息不去重
+    if (type === 'heartbeat' || type === 'pong' || type === 'auth_success') {
+      return null;
+    }
+
+    // 任务消息：用 taskId
+    const taskData = message.payload?.task || message.data?.task;
+    if (taskData?.id || taskData?.taskId) {
+      return `task:${taskData.id || taskData.taskId}`;
+    }
+
+    // 私信消息：用 senderId + content（前50字符）
+    const privateMsg = message.payload?.message || message.data?.message;
+    if (privateMsg?.sender_id && privateMsg?.content) {
+      return `pm:${privateMsg.sender_id}:${(privateMsg.content || '').slice(0, 50)}`;
+    }
+
+    // 评论消息：用 tweetId + commenterId
+    const commentMsg = message.payload || message.data;
+    if (commentMsg?.tweetId && commentMsg?.commenterId) {
+      return `comment:${commentMsg.tweetId}:${commentMsg.commenterId}`;
+    }
+
+    // 其他：用 type + from + 部分内容
+    const from = message.from || '';
+    const content = JSON.stringify(message.payload || message.data || '').slice(0, 80);
+    return `${type}:${from}:${content}`;
+  }
+
+  /**
    * 设置经验管理器
    */
   setExperienceManager(em: ExperienceManager): void {
@@ -737,6 +815,10 @@ export class TaskManager {
    * 清理资源
    */
   dispose(): void {
+    if (this.dedupCleanupTimer) {
+      clearInterval(this.dedupCleanupTimer);
+    }
+    this.recentMessageKeys.clear();
     for (const timer of this.taskTimeouts.values()) {
       clearTimeout(timer);
     }

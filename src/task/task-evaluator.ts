@@ -71,7 +71,10 @@ export class TaskEvaluator {
    */
   private assessCapability(task: Task): number {
     // 基础分：按任务类型
-    const baseScore = this.config.capabilityScores[task.taskType] || 50;
+    // 未知类型默认给很低的分（之前是50，导致什么都接）
+    const baseScore = this.config.capabilityScores[task.taskType]
+      ?? this.config.capabilityScores['other']
+      ?? 10;
 
     // 技能增强：如果已注册相关技能，加分
     let bonus = 0;
