@@ -111,6 +111,8 @@ export interface TaskResult {
   error?: string;
   /** 经验搜索结果（失败时，如果有匹配经验） */
   experienceHint?: import('../experience/types.js').ExperienceSearchResult;
+  /** v2: 成果质量问题描述（审核不通过时记录原因） */
+  qualityIssue?: string;
 }
 
 export interface TaskOutput {

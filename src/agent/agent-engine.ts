@@ -179,6 +179,23 @@ export class AgentEngine {
         };
       }
 
+      // v2: 成果质量审核 — 检查成果是否真的满足任务需求
+      const qualityCheck = this.checkOutputQuality(task, content, finalResponse.toolCallRounds || 0);
+      if (!qualityCheck.passed) {
+        this.logger.warn(`任务成果质量审核未通过 [${task.taskId}]`, {
+          reason: qualityCheck.reason,
+          contentPreview: content.slice(0, 200),
+        });
+
+        return {
+          taskId: task.taskId,
+          status: 'failed',
+          error: `成果质量未通过: ${qualityCheck.reason}`,
+          durationMs,
+          qualityIssue: qualityCheck.reason,
+        };
+      }
+
       const result: TaskResult = {
         taskId: task.taskId,
         status: 'completed',
@@ -537,35 +554,73 @@ export class AgentEngine {
   private buildFileGuidance(task: Task): string {
     const desc = (task.title + ' ' + task.description).toLowerCase();
 
-    // 判断是否是需要生成文件的任务
-    const fileKeywords = [
-      '图片', '照片', '截图', '壁纸', '头像', '背景图',
-      '下载.*图', '找.*图', '搜索.*图', '百度.*图',
-      '风景图', '大海', ' sunset', ' sunset',
+    // === 找图/下载图片类任务 ===
+    const imageSearchKeywords = [
+      '找.*图', '搜索.*图', '下载.*图', '帮我.*图',
+      '风景图', '太空图', '星空图', '壁纸', '头像', '背景图',
+      '照片', '截图',
+    ];
+    if (imageSearchKeywords.some(kw => new RegExp(kw, 'i').test(desc))) {
+      return [
+        '## 📎 找图任务执行指南',
+        '此任务需要你找到并下载一张具体的图片文件，**不能只返回文字说明或搜索结果**。',
+        '',
+        '正确执行步骤：',
+        '1. **使用 `browser_extract` 工具**访问一个图片网站（如 unsplash.com、pexels.com 等免费图库），提取页面中的图片链接',
+        '   - 例：`browser_extract({ url: "https://unsplash.com/s/photos/太空" })`',
+        '2. **从提取结果中找到合适的图片 URL**（.jpg/.png/.webp 结尾的链接）',
+        '3. **使用 `browser_navigate` 工具**访问该图片 URL，参数设 `screenshot: true` 来截取/保存图片',
+        '   - 例：`browser_navigate({ url: "<图片URL>", screenshot: true })`',
+        '4. 截图文件会自动保存在工作目录，系统会将其作为附件提交给发单人',
+        '',
+        '⚠️ 重要提醒：',
+        '- 如果 `browser_extract` 找到的图片 URL 是缩略图，尝试直接用 `browser_navigate` 配合 `screenshot: true` 截取大图',
+        '- 最终回复中应说明你找到了什么图片，以及图片保存路径',
+        '- **绝对不要**只回复"我帮你找了xxx"然后给一段文字 — 必须有实际图片文件',
+        '- 如果浏览器工具不可用，使用 `web_search` 搜索图片 URL 并在回复中提供直接下载链接',
+      ].join('\n');
+    }
+
+    // === 搜索/查找类任务（非图片） ===
+    const searchKeywords = ['搜一下', '查一下', '帮我找', '帮我查', '百度', '谷歌', '搜索', '查找'];
+    if (searchKeywords.some(kw => desc.includes(kw))) {
+      return [
+        '## 📎 搜索任务执行指南',
+        '此任务需要你实际执行搜索操作，**不能仅凭自身知识回答**。',
+        '',
+        '正确执行步骤：',
+        '1. 使用 `web_search` 或 `browser_navigate` 工具实际执行搜索',
+        '2. 从搜索结果中提取有价值的信息',
+        '3. 将整理后的信息作为成果提交',
+        '',
+        '⚠️ 如果你有 `browser_extract` 工具可用，优先使用它来访问网页获取详细内容。',
+      ].join('\n');
+    }
+
+    // === 生成文件类任务（图片生成、文档等） ===
+    const fileGenKeywords = [
       '生成.*图', '画.*图', 'AI.*画', 'AI.*图',
       '文档', '报告', '表格', '数据',
       'PPT', '幻灯片', '演示文稿',
       '音频', '视频',
     ];
+    if (fileGenKeywords.some(kw => new RegExp(kw, 'i').test(desc))) {
+      return [
+        '## 📎 文件产出要求',
+        '此任务需要生成具体文件作为成果，不能只回复文字说明。',
+        '',
+        '执行方式：',
+        '1. 如果需要文档/报告：使用 write_file 工具将内容写入文件（.md, .txt, .csv, .html 等）',
+        '2. 如果需要数据分析结果：使用 write_file 写入 CSV/JSON 格式的数据文件',
+        '',
+        '⚠️ 重要：',
+        '- 最终回复中应该包含对生成文件的说明',
+        '- 文件路径使用沙箱工作目录下的路径',
+        '- 系统会自动将你生成的文件作为附件提交给发单人',
+      ].join('\n');
+    }
 
-    const needsFile = fileKeywords.some(kw => new RegExp(kw, 'i').test(desc));
-    if (!needsFile) return '';
-
-    return [
-      '## 📎 文件产出要求',
-      '此任务需要生成具体文件作为成果（图片、文档等），不能只回复文字说明。',
-      '',
-      '执行方式：',
-      '1. 如果需要图片：使用 web_search 工具搜索相关图片 URL，然后用 download 或 write_file 工具将图片保存到本地',
-      '2. 如果需要文档/报告：使用 write_file 工具将内容写入文件（.md, .txt, .csv, .html 等）',
-      '3. 如果需要数据分析结果：使用 write_file 写入 CSV/JSON 格式的数据文件',
-      '',
-      '⚠️ 重要：',
-      '- 最终回复中应该包含对生成文件的说明',
-      '- 图片文件请保存为 .png 或 .jpg 格式',
-      '- 文件路径使用沙箱工作目录下的路径',
-      '- 系统会自动将你生成的文件作为附件提交给发单人',
-    ].join('\n');
+    return '';
   }
 
   /**
@@ -647,7 +702,7 @@ export class AgentEngine {
       const collectedFiles = new Set<string>();
 
       for (const msg of messages) {
-        // 扫描 tool 角色的消息（write_file 等）
+        // 扫描 tool 角色的消息（write_file, browser_screenshot 等）
         if (msg.role !== 'tool') continue;
 
         const msgContent = msg.content || '';
@@ -671,8 +726,25 @@ export class AgentEngine {
           }
         }
 
+        // v2: 识别 browser_screenshot / browser_navigate 的截图产出
+        if (msg.name === 'browser_screenshot' || msg.name === 'browser_navigate') {
+          // browser_screenshot 返回格式: "截图已保存: /path/to/file.jpg"
+          const screenshotMatch = msgContent.match(/(?:截图已保存|📸.*?保存)[：:]\s*(\S+\.(?:jpg|jpeg|png|gif|webp))/i);
+          if (screenshotMatch) {
+            const filePath = screenshotMatch[1];
+            if (fs.existsSync(filePath) && !collectedFiles.has(filePath)) {
+              collectedFiles.add(filePath);
+              outputs.push({
+                type: 'image',
+                content: filePath,
+                name: path.basename(filePath),
+              });
+            }
+          }
+        }
+
         // 识别包含文件路径的内容（通用模式）
-        const genericFileMatch = msgContent.match(/(?:文件已保存|已写入|已保存到?|saved|written to)[^\n]*(\/?[^\s"']+\.(?:jpg|jpeg|png|gif|webp|pdf|txt|csv|json|html|md|mp3|mp4|wav))/i);
+        const genericFileMatch = msgContent.match(/(?:文件已保存|已写入|已保存到?|saved|written to|截图已保存)[^\n]*(\/?[^\s"']+\.(?:jpg|jpeg|png|gif|webp|pdf|txt|csv|json|html|md|mp3|mp4|wav))/i);
         if (genericFileMatch) {
           const filePath = genericFileMatch[1];
           if (fs.existsSync(filePath) && !collectedFiles.has(filePath)) {
@@ -686,6 +758,19 @@ export class AgentEngine {
             });
           }
         }
+
+        // v2: 扫描工具结果中的图片 URL（从 browser_extract 结果中提取）
+        // browser_extract 返回格式: "- 描述: https://example.com/image.jpg"
+        if (msg.name === 'browser_extract' || msgContent.includes('### 图片')) {
+          const imgUrlMatches = msgContent.matchAll(/https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+\.(?:jpg|jpeg|png|gif|webp)/gi);
+          for (const match of imgUrlMatches) {
+            const imgUrl = match[0];
+            // 不需要下载，只记录 URL — 让质量审核知道有图片 URL 可用
+            if (!collectedFiles.has(imgUrl)) {
+              collectedFiles.add(imgUrl);
+            }
+          }
+        }
       }
 
       if (outputs.length > 1) {
@@ -696,6 +781,93 @@ export class AgentEngine {
     }
 
     return outputs;
+  }
+
+  /**
+   * v2: 成果质量审核
+   *
+   * 检查 LLM 输出是否真正满足了任务需求，防止"说了但没做"的情况。
+   * 例如：找图任务只返回了文字说明，没有实际下载图片。
+   */
+  private checkOutputQuality(
+    task: Task,
+    content: string,
+    toolCallRounds: number,
+  ): { passed: boolean; reason?: string } {
+    const desc = (task.title + ' ' + task.description).toLowerCase();
+
+    // === 图片类任务检查 ===
+    const imageKeywords = [
+      '找.*图', '搜索.*图', '下载.*图', '帮我.*图',
+      '图片', '照片', '截图', '壁纸', '头像', '背景图',
+      '风景图', '太空图', '星空图', '大海', '夕阳', 'sunset',
+    ];
+    const needsImage = imageKeywords.some(kw => new RegExp(kw, 'i').test(desc));
+
+    if (needsImage) {
+      // 图片任务必须满足以下条件之一：
+      // 1. 有文件产出（outputs 中有 image 类型）
+      // 2. 工具调用 >= 1 轮（至少尝试了搜索/下载）
+      // 3. 内容中包含图片 URL（可能是直接返回了链接）
+      const outputs = this.buildOutputs(content);
+      const hasImageFile = outputs.some(o => o.type === 'image');
+      const hasImageUrl = /https?:\/\/[^\s"')\]]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)/i.test(content);
+      const attemptedTools = toolCallRounds >= 1;
+
+      if (!hasImageFile && !attemptedTools && !hasImageUrl) {
+        return {
+          passed: false,
+          reason: `任务需要图片文件作为成果，但 Agent 没有使用任何工具来搜索/下载图片（工具调用轮次: ${toolCallRounds}）。需要使用 browser_extract 或 web_search 工具查找图片，并下载保存为文件。`,
+        };
+      }
+
+      // 如果有工具调用但没有图片文件，检查是否只是搜索了文字
+      if (attemptedTools && !hasImageFile && !hasImageUrl) {
+        // 允许通过，但记录警告（工具调用了但可能没有正确处理）
+        this.logger.debug(`图片任务使用了工具但没有产出图片文件 [${task.taskId}]`, {
+          toolCallRounds,
+          contentLength: content.length,
+        });
+      }
+    }
+
+    // === 搜索/查找类任务检查 ===
+    const searchKeywords = ['搜一下', '查一下', '帮我找', '帮我查', '搜索', '查找', '百度', '谷歌'];
+    const needsSearch = searchKeywords.some(kw => desc.includes(kw));
+
+    if (needsSearch && toolCallRounds === 0) {
+      // 搜索任务至少应该尝试使用工具
+      // 但不强制失败，只记录警告（LLM 可能用自身知识回答了）
+      this.logger.debug(`搜索任务没有使用任何工具 [${task.taskId}]`);
+    }
+
+    // === "假工具调用"检测 ===
+    // 如果内容中包含看起来像工具调用的文本但没有实际工具调用
+    if (toolCallRounds === 0) {
+      const fakeToolCallPatterns = [
+        /[:<]?\s*web_search\s*[\(（]/,
+        /[:<]?\s*browser_navigate\s*[\(（]/,
+        /[:<]?\s*write_file\s*[\(（]/,
+        /[:<]?\s*browser_extract\s*[\(（]/,
+        /[:<]?\s*image_generate\s*[\(（]/,
+      ];
+      const hasFakeToolCall = fakeToolCallPatterns.some(p => p.test(content));
+
+      if (hasFakeToolCall) {
+        this.logger.warn(`检测到"假工具调用"文本 [${task.taskId}]`, {
+          contentPreview: content.slice(0, 300),
+        });
+        // 对于需要实际操作的任务，假工具调用 = 失败
+        if (needsImage || needsSearch) {
+          return {
+            passed: false,
+            reason: 'Agent 将工具调用以纯文本形式输出，没有实际执行工具。这可能是因为当前 LLM 模型不支持 function calling，或工具定义未正确传递。',
+          };
+        }
+      }
+    }
+
+    return { passed: true };
   }
 
   /**

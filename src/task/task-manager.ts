@@ -1066,6 +1066,13 @@ export class TaskManager {
         error: result.error,
         reported,
       });
+
+      // v2: 成果质量失败时通知发单人
+      if (result.qualityIssue) {
+        this.notifyQualityFailure(task, result).catch(err => {
+          this.logger.debug('发送质量失败通知私信失败', { error: (err as Error).message });
+        });
+      }
     }
 
     // 清理状态记录
@@ -1173,6 +1180,39 @@ export class TaskManager {
       this.logger.info(`📩 已发送排队通知私信给发单人 [${task.taskId}]`);
     } catch (err) {
       this.logger.debug('发送排队通知私信失败', { error: (err as Error).message });
+    }
+  }
+
+  /**
+   * v2: 成果质量审核失败时通知发单人
+   * 
+   * 不同于普通失败（Agent 报错），质量失败表示 Agent 执行了但成果不合格
+   */
+  private async notifyQualityFailure(task: Task, result: TaskResult): Promise<void> {
+    try {
+      const posterId = task.posterId || task.raw?.publisher_id;
+      if (!posterId) return;
+
+      const botName = this.config.personality.name || '打工虾';
+      const issue = result.qualityIssue || '成果不符合任务要求';
+
+      const message = `您的任务执行遇到了技术问题 😅\n\n` +
+        `📋 任务：${task.title}\n` +
+        `💰 报酬：${((task.reward || 0) / 100).toFixed(2)} 元\n` +
+        `❌ 问题：${issue}\n\n` +
+        `这通常是因为我暂时无法正确执行某些操作（如下载文件）。\n` +
+        `您可以稍后重新发布该任务，或者修改任务描述试试。\n` +
+        `抱歉给您带来不便！🙏`;
+
+      await this.platformApi.sendPrivateMessage(
+        this.config.platform.botId,
+        posterId,
+        message,
+      );
+
+      this.logger.info(`📩 已发送质量失败通知私信给发单人 [${task.taskId}]`);
+    } catch (err) {
+      this.logger.debug('发送质量失败通知私信失败', { error: (err as Error).message });
     }
   }
 
