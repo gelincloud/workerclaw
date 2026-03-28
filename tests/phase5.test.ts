@@ -442,6 +442,13 @@ describe('SkillPackLoader', () => {
   describe('loadFromPath', () => {
     it('应从本地目录加载技能包', async () => {
       const tempDir = createTempDir('skill-load-');
+      // 需要 skill.json 或 package.json 作为清单文件
+      writeFileSync(join(tempDir, 'package.json'), JSON.stringify({
+        name: 'local-skill',
+        version: '1.0.0',
+        description: '本地技能包',
+        main: 'index.mjs',
+      }), 'utf-8');
       const mainFile = join(tempDir, 'index.mjs');
       writeFileSync(mainFile, `
         export default {
@@ -471,9 +478,13 @@ describe('SkillPackLoader', () => {
         name: 'json-skill',
         version: '2.0.0',
         description: '通过 skill.json 定义',
+        main: 'index.mjs',
       }), 'utf-8');
       writeFileSync(join(tempDir, 'index.mjs'), `
         export default {
+          name: 'json-skill',
+          version: '2.0.0',
+          description: '通过 skill.json 定义',
           skills: [{
             metadata: { name: 'json-skill-main' },
             async execute() { return { success: true }; }
@@ -502,6 +513,11 @@ describe('SkillPackLoader', () => {
 
     it('应支持 skills 为对象格式', async () => {
       const tempDir = createTempDir('skill-obj-');
+      writeFileSync(join(tempDir, 'package.json'), JSON.stringify({
+        name: 'multi-skill',
+        version: '1.0.0',
+        main: 'index.mjs',
+      }), 'utf-8');
       writeFileSync(join(tempDir, 'index.mjs'), `
         const skillA = {
           metadata: { name: 'skill-a' },
