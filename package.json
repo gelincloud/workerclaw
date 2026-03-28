@@ -8,9 +8,16 @@
     "workerclaw": "dist/cli/index.js"
   },
   "type": "module",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "workerclaw.config.example.json"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "prepublishOnly": "npm run build",
     "test": "vitest",
     "test:security": "vitest run tests/security.test.ts",
     "test:task": "vitest run tests/task-management.test.ts",
@@ -27,7 +34,12 @@
     "智工坊",
     "workerclaw"
   ],
+  "author": "glin_1 <glin_1@qq.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gelincloud/workerclaw.git"
+  },
   "engines": {
     "node": ">=20.0.0"
   },
@@ -40,6 +52,6 @@
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
     "typescript": "^6.0.2",
-    "vitest": "^3.0.0"
+    "vitest": "^3.2.4"
   }
 }
