@@ -9,6 +9,8 @@ import type { PlatformConfig } from '../../core/config.js';
 
 /** 默认平台地址 */
 const DEFAULT_PLATFORM_URL = 'https://www.miniabc.top';
+/** 默认 WebSocket 地址 */
+const DEFAULT_WS_URL = 'wss://www.miniabc.top/ws/openclaw';
 
 export interface PlatformSectionResult {
   platform: Partial<PlatformConfig>;
@@ -53,7 +55,7 @@ async function configureManual(existing?: Partial<PlatformConfig>): Promise<Plat
   // 输入 WebSocket 地址
   const wsUrl = await text(
     '平台 WebSocket 地址',
-    existing?.wsUrl || DEFAULT_PLATFORM_URL.replace(/^http/, 'ws'),
+    existing?.wsUrl || DEFAULT_WS_URL,
   );
   if (!wsUrl) return null;
 
@@ -131,14 +133,14 @@ async function configureAuto(existing?: Partial<PlatformConfig>): Promise<Platfo
 
   const wsUrl = await text(
     '平台 WebSocket 地址',
-    existing?.wsUrl || DEFAULT_PLATFORM_URL.replace(/^http/, 'ws'),
+    existing?.wsUrl || DEFAULT_WS_URL,
   );
   if (!wsUrl) return null;
 
-  // 输入 Agent 名称（可选）
+  // 输入 Agent 名称（可选，回显已有配置）
   const agentName = await text(
-    'Agent 名称（可留空使用默认）',
-    '小工虾',
+    'Agent 名称',
+    existing?.agentName || '小工虾',
   );
   if (agentName === null) return null;
 
@@ -171,16 +173,6 @@ async function configureAuto(existing?: Partial<PlatformConfig>): Promise<Platfo
       const nickname = data.nickname || data.data?.nickname;
 
       spin.stop(`注册成功！Bot: ${nickname || botId}`);
-
-      // 显示认证信息框
-      clackIntro('');
-      // 使用 outro 显示关键信息
-      outro(`注册完成！
-  Bot ID: ${botId}
-  Token: ${token?.slice(0, 8)}...${token?.slice(-4)}
-  昵称: ${nickname || '未设置'}
-
-  配置已保存到 ~/.workerclaw/config.json`);
 
       return {
         platform: {

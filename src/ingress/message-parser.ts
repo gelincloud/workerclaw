@@ -2,11 +2,13 @@
  * 消息解析器
  * 
  * 将平台原始消息转换为 WorkerClaw 内部使用的类型
+ * 
+ * 服务端推送格式: { type: 'new_task'|..., payload: { task: {...} }, timestamp }
+ * WorkerClaw 内部格式统一使用 message.data（由 miniabc-client.ts 从 payload 转换）
  */
 
 import { createLogger, type Logger } from '../core/logger.js';
 import type { PlatformMessage } from '../types/message.js';
-import { WSMessageType } from '../types/message.js';
 import type { Task, TaskType } from '../types/task.js';
 
 export interface ParsedMessage {
@@ -37,29 +39,58 @@ export class MessageParser {
 
   /**
    * 消息分类
+   * 
+   * 同时支持 WSMessageType 枚举和服务端实际字符串类型
    */
-  private categorize(type: WSMessageType): ParsedMessage['category'] {
+  private categorize(type: string): ParsedMessage['category'] {
     switch (type) {
-      case WSMessageType.TASK_PUSH:
-      case WSMessageType.TASK_CANCEL:
-      case WSMessageType.TASK_UPDATE:
+      // 任务相关（服务端实际类型）
+      case 'new_task':
+      case 'new_private_task':
+      // 兼容枚举
+      case 'task_push':
+      case 'task_cancel':
+      case 'task_update':
         return 'task';
 
-      case WSMessageType.MESSAGE:
-      case WSMessageType.COMMENT:
-      case WSMessageType.MENTION:
-      case WSMessageType.FEED_UPDATE:
+      // 交互消息（服务端实际类型）
+      case 'new_message':
+      case 'new_private_message':
+      case 'comment':
+      case 'blog_comment':
+      case 'blog_reply':
+      case 'chat_message':
+      case 'nickname_update':
+      case 'gift_received':
+      case 'ocean_new_message':
+      // 兼容枚举
+      case 'message':
+      case 'mention':
+      case 'feed_update':
         return 'interaction';
 
-      case WSMessageType.SYSTEM:
-      case WSMessageType.ERROR:
-      case WSMessageType.CONNECT:
-      case WSMessageType.CONNECT_ACK:
-      case WSMessageType.DISCONNECT:
+      // 系统消息
+      case 'auth_success':
+      case 'user_status':
+      case 'online_count':
+      case 'email_sent':
+      case 'new_email':
+      case 'task_rejected':
+      case 'task_closed':
+      case 'task_arbitration_applied':
+      case 'task_arbitration_resolved':
+      case 'bid_won':
+      case 'system':
+      case 'error':
+      case 'connect':
+      case 'connect_ack':
+      case 'disconnect':
         return 'system';
 
-      case WSMessageType.PING:
-      case WSMessageType.PONG:
+      // 心跳
+      case 'ping':
+      case 'pong':
+      case 'heartbeat':
         return 'heartbeat';
 
       default:
@@ -69,28 +100,40 @@ export class MessageParser {
 
   /**
    * 解析任务消息
+   * 
+   * 服务端 new_task 格式: { type: 'new_task', payload: { task: { id, publisher_id, content, ... } } }
+   * 经过 miniabc-client 转换后: { type: 'new_task', data: { task: { id, publisher_id, content, ... } } }
    */
   private parseTask(message: PlatformMessage): Task | undefined {
     try {
-      const data = message.data;
+      // 服务端推送的任务在 data.task 中（data 由 miniabc-client 从 payload 转换）
+      const taskData = message.data?.task || message.payload?.task;
+
+      if (!taskData) {
+        this.logger.warn('任务消息中没有 task 数据', { type: message.type });
+        return undefined;
+      }
 
       return {
-        taskId: data.taskId,
-        taskType: this.normalizeTaskType(data.taskType),
-        title: data.title || '未命名任务',
-        description: data.description || '',
-        posterId: data.posterId || message.from || 'unknown',
-        posterName: data.posterName,
-        reward: data.reward,
-        deadline: data.deadline,
-        attachments: data.attachments?.map((a: any) => ({
-          type: a.type,
+        taskId: taskData.id || taskData.taskId,
+        taskType: this.normalizeTaskType(taskData.task_type || taskData.taskType),
+        title: taskData.title || taskData.content?.substring(0, 50) || '未命名任务',
+        description: taskData.content || taskData.description || '',
+        posterId: taskData.publisher_id || taskData.posterId || message.from || 'unknown',
+        posterName: taskData.publisherName || taskData.poster_name,
+        reward: taskData.reward,
+        deadline: taskData.deadline,
+        images: taskData.images || [],
+        attachments: (taskData.attachments || []).map((a: any) => ({
+          type: a.type || 'file',
           url: a.url,
           name: a.name,
           mimeType: a.mimeType,
           size: a.size,
         })),
-        createdAt: message.timestamp,
+        status: taskData.status || 'open',
+        createdAt: taskData.created_at || taskData.createdAt || 
+          (typeof message.timestamp === 'number' ? new Date(message.timestamp).toISOString() : message.timestamp),
         raw: message,
       };
     } catch (err) {

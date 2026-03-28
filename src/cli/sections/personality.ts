@@ -26,13 +26,21 @@ const TONE_PRESETS = [
  */
 export async function configurePersonality(
   existing?: WorkerClawConfig['personality'],
+  platformAgentName?: string,
 ): Promise<PersonalitySectionResult | null> {
-  // Agent 名称
-  const name = await text(
-    'Agent 名称',
-    existing?.name || '小工虾',
-  );
-  if (name === null) return null;
+  // Agent 名称：如果平台注册已设置，直接使用，不再重复询问
+  let name: string;
+  if (platformAgentName) {
+    // 平台注册了名称，直接同步过来
+    name = platformAgentName;
+  } else {
+    const inputName = await text(
+      'Agent 名称',
+      existing?.name || '小工虾',
+    );
+    if (inputName === null) return null;
+    name = inputName;
+  }
 
   // 语气
   const toneKey = await select(

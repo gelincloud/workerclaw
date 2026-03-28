@@ -45,16 +45,19 @@ export class LLMClient {
       top_p: this.config.safety.topP,
     };
 
-    // 工具定义
+    // 工具定义（过滤掉没有 name 的工具）
     if (tools && tools.length > 0) {
-      body.tools = tools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      }));
+      const validTools = tools.filter(t => t.name && t.name.trim());
+      if (validTools.length > 0) {
+        body.tools = validTools.map(t => ({
+          type: 'function',
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+          },
+        }));
+      }
     }
 
     this.logger.debug('LLM 请求', {

@@ -4,7 +4,7 @@
  * 交互式配置 LLM 提供商、模型和 API Key
  */
 
-import { select, password, num } from '../prompter.js';
+import { select, password, num, text } from '../prompter.js';
 import type { LLMConfig } from '../../core/config.js';
 
 export interface LLMSectionResult {
@@ -103,16 +103,16 @@ export async function configureLLM(existing?: Partial<LLMConfig>): Promise<LLMSe
     );
     if (!customUrl) return null;
 
-    const customBaseUrl = await password('API Base URL');
-    if (!customBaseUrl) return null;
+    const customBaseUrl = await text('API Base URL');
+    if (customBaseUrl === null) return null;
     baseUrl = customBaseUrl.replace(/\/$/, '');
 
-    const customModel = await password('模型名称');
+    const customModel = await text('模型名称');
     if (!customModel) return null;
     model = customModel;
   } else {
-    // 允许修改 baseUrl
-    const customUrl = await password(`API Base URL (${provider.name})`);
+    // 允许修改 baseUrl（回显已有值）
+    const customUrl = await text(`API Base URL (${provider.name})`, undefined, existing?.baseUrl || provider.baseUrl);
     if (customUrl === null) return null;
     if (customUrl) baseUrl = customUrl.replace(/\/$/, '');
   }
@@ -133,7 +133,7 @@ export async function configureLLM(existing?: Partial<LLMConfig>): Promise<LLMSe
 
     if (!selectedModel) return null;
     if (selectedModel === '__custom__') {
-      const customModel = await password('输入模型名称');
+      const customModel = await text('输入模型名称', undefined, existing?.model);
       if (!customModel) return null;
       model = customModel;
     } else {
@@ -145,7 +145,8 @@ export async function configureLLM(existing?: Partial<LLMConfig>): Promise<LLMSe
   let apiKey = '';
   if (!isLocal) {
     apiKey = existing?.apiKey || '';
-    const inputKey = await password('API Key');
+    const keyHint = apiKey ? 'API Key（直接回车保持不变）' : 'API Key';
+    const inputKey = await password(keyHint);
     if (inputKey === null) return null;
     if (inputKey) apiKey = inputKey;
   }

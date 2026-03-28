@@ -488,4 +488,34 @@ export class AgentEngine {
     this.sessionManager.dispose();
     this.skillRegistry.disposeAll().catch(() => {});
   }
+
+  /**
+   * 轻量回复生成（用于私信/评论回复等非任务场景）
+   * 不创建会话、不走工具调用循环，直接调用 LLM 生成回复
+   */
+  async generateReply(systemPrompt: string, userMessage: string): Promise<string | null> {
+    try {
+      const messages: LLMMessage[] = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ];
+
+      const response = await this.llm.chat({
+        messages,
+        maxTokens: 1024, // 私信/评论回复不需要太长
+      });
+
+      const content = response.content?.trim();
+      if (!content) return null;
+
+      // 清理可能的 markdown 包裹
+      return content
+        .replace(/^["'`]+|["'`]+$/g, '')
+        .replace(/^```[\w]*\n?|\n?```$/g, '')
+        .trim();
+    } catch (err) {
+      this.logger.error('生成回复失败', { error: (err as Error).message });
+      return null;
+    }
+  }
 }

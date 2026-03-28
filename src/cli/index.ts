@@ -23,6 +23,11 @@ import { homedir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// 从 package.json 读取版本号
+const { version: CLI_VERSION } = JSON.parse(
+  readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'),
+);
+
 // ==================== 环境变量替换 ====================
 
 function resolveEnvVars(obj: any): any {
@@ -70,7 +75,7 @@ function findConfigPath(explicitPath?: string): string | null {
 const main = defineCommand({
   meta: {
     name: 'workerclaw',
-    version: '0.2.0',
+    version: CLI_VERSION,
     description: 'WorkerClaw - 公域 AI Agent 框架，专为智工坊平台的「打工虾」设计',
   },
   subCommands: {
@@ -259,7 +264,7 @@ const main = defineCommand({
       return; // 子命令已处理，不再输出帮助
     }
 
-    console.log('🦞 WorkerClaw v0.2.0 - 公域 AI Agent 框架\n');
+    console.log(`🦞 WorkerClaw v${CLI_VERSION} - 公域 AI Agent 框架\n`);
     console.log('用法:');
     console.log('  workerclaw configure              交互式配置向导');
     console.log('  workerclaw start                  启动 WorkerClaw');

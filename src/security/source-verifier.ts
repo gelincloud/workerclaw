@@ -6,7 +6,7 @@
 
 import { createLogger, type Logger } from '../core/logger.js';
 import type { PlatformMessage } from '../types/message.js';
-import { WSMessageType } from '../types/message.js';
+import { WSMessageType, ServerMessageType } from '../types/message.js';
 
 export interface SourceVerifyResult {
   valid: boolean;
@@ -28,8 +28,14 @@ const DEFAULT_SOURCE_CONFIG: SourceVerifierConfig = {
   validateTimestamp: true,
   maxTimestampSkewMs: 5 * 60 * 1000, // 5 分钟
   requireTaskId: true,
-  requireSenderId: true,
+  requireSenderId: false, // 服务端很多消息没有 from 字段（如 user_status、online_count）
 };
+
+/** 不需要 from 字段的消息类型（系统广播类） */
+const NO_FROM_TYPES = new Set([
+  'user_status', 'online_count', 'system', 'error',
+  ServerMessageType.AUTH_SUCCESS, ServerMessageType.PONG,
+]);
 
 export class SourceVerifier {
   private logger: Logger;
@@ -68,11 +74,13 @@ export class SourceVerifier {
       return { valid: false, reason: '消息缺少 type 字段' };
     }
 
-    // 检查是否是已知的消息类型
-    const validTypes = new Set(Object.values(WSMessageType));
-    if (!validTypes.has(message.type as WSMessageType)) {
-      this.logger.warn('未知消息类型', { type: message.type });
-      // 不拒绝，但记录警告（平台可能新增消息类型）
+    // 检查是否是已知的消息类型（WSMessageType 枚举 + ServerMessageType 实际类型）
+    const knownTypes = new Set([
+      ...Object.values(WSMessageType),
+      ...Object.values(ServerMessageType),
+    ]);
+    if (!knownTypes.has(message.type as any)) {
+      this.logger.debug('未知消息类型（不拒绝，仅记录）', { type: message.type });
     }
 
     return { valid: true };
@@ -84,31 +92,38 @@ export class SourceVerifier {
       return { valid: false, reason: '消息缺少 msgId 字段' };
     }
 
-    // 任务推送必须完整
-    if (message.type === WSMessageType.TASK_PUSH) {
-      const data = message.data;
+    // 任务推送必须完整（兼容 new_task 和 task_push）
+    const msgType = message.type;
+    if (msgType === 'new_task' || msgType === 'new_private_task' || msgType === WSMessageType.TASK_PUSH) {
+      const data = message.data || message.payload;
       if (!data) {
-        return { valid: false, reason: '任务推送消息缺少 data 字段' };
+        return { valid: false, reason: '任务推送消息缺少 data/payload 字段' };
       }
-      if (this.config.requireTaskId && !data.taskId) {
+      // 服务端任务在 data.task 或 payload.task 中
+      const taskData = data.task;
+      if (this.config.requireTaskId && !taskData?.id && !taskData?.taskId) {
         return { valid: false, reason: '任务推送消息缺少 taskId' };
       }
-      if (!data.description) {
-        return { valid: false, reason: '任务推送消息缺少 description' };
+      if (!taskData?.content && !taskData?.description) {
+        return { valid: false, reason: '任务推送消息缺少 content/description' };
       }
     }
 
-    // 非系统消息应该有发送者
+    // 系统广播消息不需要 from 字段
+    if (NO_FROM_TYPES.has(msgType)) {
+      return { valid: true };
+    }
+
+    // 非系统消息检查 from 字段
     if (
       this.config.requireSenderId &&
-      message.type !== WSMessageType.SYSTEM &&
       message.type !== WSMessageType.PING &&
       message.type !== WSMessageType.PONG &&
       message.type !== WSMessageType.CONNECT_ACK &&
       !message.from
     ) {
-      this.logger.warn('消息缺少 from 字段', { type: message.type });
-      // 记录警告但不拒绝
+      this.logger.debug('消息缺少 from 字段', { type: message.type });
+      // 仅记录 debug，不拒绝（服务端很多消息不携带 from）
     }
 
     return { valid: true };

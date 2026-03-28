@@ -2,12 +2,17 @@
  * 平台消息类型定义
  * 
  * 定义智工坊平台通过 WebSocket 推送的消息格式
+ * 
+ * 注意：服务端实际协议（server.js）与最初设计有差异：
+ * - 认证：客户端发送 { type: 'auth', payload: { botId, token } }，服务端返回 { type: 'auth_success', payload: { botId } }
+ * - 心跳：客户端发送 { type: 'heartbeat' }，服务端返回 { type: 'pong', payload: { status: 'ok' } }
+ * - 消息体：服务端推送使用 { type, payload, timestamp } 格式（不是 data/msgId）
  */
 
 // ==================== WebSocket 消息类型 ====================
 
 export enum WSMessageType {
-  // 连接管理
+  // 连接管理（设计时定义，保留兼容）
   CONNECT = 'connect',
   CONNECT_ACK = 'connect_ack',
   DISCONNECT = 'disconnect',
@@ -34,19 +39,72 @@ export enum WSMessageType {
   FEED_UPDATE = 'feed_update',     // 信息流更新
 }
 
-// ==================== 消息基础结构 ====================
+// ==================== 服务端实际消息类型（字符串） ====================
+
+export const ServerMessageType = {
+  /** 服务端认证成功响应 */
+  AUTH_SUCCESS: 'auth_success',
+  /** 心跳响应 */
+  PONG: 'pong',
+  /** 新任务推送 */
+  NEW_TASK: 'new_task',
+  /** 新消息通知 */
+  NEW_MESSAGE: 'new_message',
+  /** 新私信 */
+  NEW_PRIVATE_MESSAGE: 'new_private_message',
+  /** 新私信任务 */
+  NEW_PRIVATE_TASK: 'new_private_task',
+  /** 评论通知 */
+  COMMENT: 'comment',
+  /** 博客评论 */
+  BLOG_COMMENT: 'blog_comment',
+  /** 博客回复 */
+  BLOG_REPLY: 'blog_reply',
+  /** 昵称更新 */
+  NICKNAME_UPDATE: 'nickname_update',
+  /** 邮件通知 */
+  EMAIL_SENT: 'email_sent',
+  /** 新邮件 */
+  NEW_EMAIL: 'new_email',
+  /** 聊天消息 */
+  CHAT_MESSAGE: 'chat_message',
+  /** 任务拒绝 */
+  TASK_REJECTED: 'task_rejected',
+  /** 任务关闭 */
+  TASK_CLOSED: 'task_closed',
+  /** 仲裁申请 */
+  TASK_ARBITRATION_APPLIED: 'task_arbitration_applied',
+  /** 仲裁解决 */
+  TASK_ARBITRATION_RESOLVED: 'task_arbitration_resolved',
+  /** 竞标成功 */
+  BID_WON: 'bid_won',
+  /** 用户状态 */
+  USER_STATUS: 'user_status',
+  /** 在线人数 */
+  ONLINE_COUNT: 'online_count',
+  /** 海洋消息 */
+  OCEAN_NEW_MESSAGE: 'ocean_new_message',
+  /** 赠礼通知 */
+  GIFT_RECEIVED: 'gift_received',
+} as const;
+
+export type ServerMessageString = typeof ServerMessageType[keyof typeof ServerMessageType];
+
+// ==================== 消息基础结构（WorkerClaw 内部格式） ====================
 
 export interface PlatformMessage {
   /** 消息类型 */
-  type: WSMessageType;
-  /** 消息 ID */
-  msgId: string;
-  /** 时间戳 (ISO 8601) */
-  timestamp: string;
+  type: WSMessageType | string;
+  /** 消息 ID（内部生成） */
+  msgId?: string;
+  /** 时间戳 (ISO 8601 或数字) */
+  timestamp?: string | number;
   /** 发送者 ID */
   from?: string;
-  /** 消息体 */
-  data: any;
+  /** 消息体（WorkerClaw 内部统一使用 data） */
+  data?: any;
+  /** 服务端实际 payload（原始格式） */
+  payload?: any;
 }
 
 // ==================== 心跳消息 ====================
@@ -64,35 +122,29 @@ export interface HeartbeatMessage {
   };
 }
 
-// ==================== 任务推送消息 ====================
+// ==================== 任务推送消息（服务端实际格式） ====================
 
-export interface TaskPushPayload {
-  taskId: string;
-  taskType: string;
-  title: string;
-  description: string;
-  posterId: string;
-  posterName?: string;
-  reward?: number;
-  deadline?: string;
-  attachments?: Array<{
-    type: 'image' | 'file' | 'url';
-    url: string;
-    name?: string;
-    mimeType?: string;
-    size?: number;
-  }>;
+export interface ServerTaskPushMessage {
+  type: 'new_task';
+  payload: {
+    task: {
+      id: string;
+      publisher_id: string;
+      content: string;
+      images?: string[];
+      reward?: number;
+      deadline?: string;
+      status?: string;
+      task_type?: string;
+      created_at: string;
+      // 可能还有其他字段
+      [key: string]: any;
+    };
+  };
+  timestamp: number;
 }
 
-export interface TaskPushMessage {
-  type: WSMessageType.TASK_PUSH;
-  msgId: string;
-  timestamp: string;
-  from: string;
-  data: TaskPushPayload;
-}
-
-// ==================== 连接确认消息 ====================
+// ==================== 连接确认消息（设计时定义，保留兼容） ====================
 
 export interface ConnectAckMessage {
   type: WSMessageType.CONNECT_ACK;

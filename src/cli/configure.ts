@@ -16,6 +16,8 @@ import { join } from 'node:path';
 
 /** 默认平台地址 */
 export const DEFAULT_PLATFORM_URL = 'https://www.miniabc.top';
+/** 默认 WebSocket 地址 */
+const DEFAULT_WS_URL = 'wss://www.miniabc.top/ws/openclaw';
 
 /** WorkerClaw 数据目录 */
 export const WORKERCLAW_DIR = join(homedir(), '.workerclaw');
@@ -68,7 +70,12 @@ export async function configureWizard(
         break;
       }
       case 'personality': {
-        const result = await configurePersonality(existingConfig?.personality);
+        // 如果本次 platform section 设置了 agentName，同步到 personality（避免重复询问）
+        const platformAgentName = results.platform?.agentName;
+        const result = await configurePersonality(
+          existingConfig?.personality,
+          platformAgentName || undefined,
+        );
         if (!result) {
           outro('配置已取消');
           process.exit(0);
@@ -101,7 +108,22 @@ export async function configureWizard(
   // 保存配置文件
   saveConfig(cfgPath, finalConfig);
 
-  outro(`配置完成！运行 workerclaw start 启动。\n  配置文件: ${cfgPath}`);
+  // 打印配置摘要（含完整 token，方便用户记录）
+  console.log('');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('📋 配置已保存，请妥善保管以下信息：');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`  📁 配置文件: ${cfgPath}`);
+  console.log(`  🤖 Bot ID:   ${finalConfig.platform.botId}`);
+  console.log(`  🔑 Token:    ${finalConfig.platform.token}`);
+  console.log(`  👤 Agent:    ${finalConfig.personality?.name || finalConfig.platform.agentName || '未设置'}`);
+  console.log(`  🧠 LLM:      ${finalConfig.llm.provider} / ${finalConfig.llm.model}`);
+  console.log(`  🌐 WebSocket: ${finalConfig.platform.wsUrl}`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('  运行 workerclaw start 启动打工虾！');
+  console.log('');
+
+  outro('配置完成！');
 }
 
 /**
@@ -188,7 +210,7 @@ function buildFinalConfig(
     name: existing?.name || 'WorkerClaw',
     platform: {
       apiUrl: newValues.platform?.apiUrl || existing?.platform?.apiUrl || DEFAULT_PLATFORM_URL,
-      wsUrl: newValues.platform?.wsUrl || existing?.platform?.wsUrl || DEFAULT_PLATFORM_URL.replace(/^http/, 'ws'),
+      wsUrl: newValues.platform?.wsUrl || existing?.platform?.wsUrl || DEFAULT_WS_URL,
       botId: newValues.platform?.botId || existing?.platform?.botId || '',
       token: newValues.platform?.token || existing?.platform?.token || '',
       agentName: newValues.platform?.agentName || existing?.platform?.agentName,
@@ -239,15 +261,6 @@ function saveConfig(configPath: string, config: WorkerClawConfig): void {
     mkdirSync(dir, { recursive: true });
   }
 
-  // 隐藏敏感信息
-  const displayConfig = { ...config };
-  if (displayConfig.platform?.token) {
-    displayConfig.platform.token = displayConfig.platform.token.slice(0, 8) + '...';
-  }
-  if (displayConfig.llm?.apiKey) {
-    displayConfig.llm.apiKey = displayConfig.llm.apiKey.slice(0, 8) + '...';
-  }
-
-  // 保存实际配置（未隐藏）
+  // 保存完整配置
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }

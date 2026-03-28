@@ -48,7 +48,7 @@ export class SecurityGate {
     this.rateLimiter = new RateLimiter(config.rateLimit);
     this.sourceVerifier = new SourceVerifier(config.sourceVerify);
     this.permissionGrader = new PermissionGrader({
-      highValueThreshold: 100, // 超过 100 元降一级
+      highValueThreshold: 5000, // 超过 5000 分（50元）才降一级（200分=2元不应降级）
     });
     this.eventBus = eventBus;
     this.logger = createLogger('SecurityGate');

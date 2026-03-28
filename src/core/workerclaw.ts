@@ -169,7 +169,7 @@ export class WorkerClaw {
     return {
       isRunning: this.isRunning,
       connected: this.wsClient.connected,
-      botId: this.wsClient.getBotId,
+      botId: this.config.platform.botId || null,
       tasks: this.taskManager.getStatus(),
       security: this.securityGate.getRateLimitStatus(),
       sessions: this.taskManager.getAgentEngine().getSessionStats(),

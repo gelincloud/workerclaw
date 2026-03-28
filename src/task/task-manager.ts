@@ -21,7 +21,6 @@ import type {
 } from '../types/task.js';
 import type { PlatformConfig, LLMConfig, SecurityConfig, TaskConfig } from '../core/config.js';
 import type { PermissionLevel } from '../types/agent.js';
-import { WSMessageType } from '../types/message.js';
 
 export interface TaskManagerConfig {
   platform: PlatformConfig;
@@ -122,31 +121,219 @@ export class TaskManager {
 
     // 2. 解析消息
     const parsed = messageParser.parse(message);
-    if (parsed.category !== 'task') {
-      if (parsed.category === 'interaction') {
-        this.logger.debug('收到交互消息（暂不处理）', { type: message.type });
-      }
-      return;
-    }
 
-    if (!parsed.task) {
-      this.logger.warn('任务消息解析失败，无有效任务数据');
-      return;
-    }
+    // 3. 分类处理
+    switch (parsed.category) {
+      case 'task':
+        if (!parsed.task) {
+          this.logger.warn('任务消息解析失败，无有效任务数据');
+          return;
+        }
+        await this.handleTaskMessage(message.type, parsed.task!);
+        break;
 
-    // 3. 分发处理
-    switch (message.type) {
-      case WSMessageType.TASK_PUSH:
-        await this.handleTaskPush(parsed.task);
+      case 'interaction':
+        await this.handleInteractionMessage(message);
         break;
-      case WSMessageType.TASK_CANCEL:
-        await this.handleTaskCancel(parsed.task);
+
+      case 'system':
+        this.logger.debug('系统消息', { type: message.type });
+        // 处理任务相关的系统消息
+        this.handleSystemMessage(message);
         break;
-      case WSMessageType.TASK_UPDATE:
-        this.logger.debug('收到任务更新（暂不处理）', { taskId: parsed.task.taskId });
+
+      case 'heartbeat':
+        // 心跳消息，忽略
         break;
+
       default:
-        this.logger.debug('未处理的任务消息类型', { type: message.type });
+        this.logger.debug('未处理的消息', { type: message.type, category: parsed.category });
+        break;
+    }
+  }
+
+  /**
+   * 处理任务消息（分发到不同处理逻辑）
+   */
+  private async handleTaskMessage(msgType: string, task: Task): Promise<void> {
+    if (msgType === 'new_task' || msgType === 'new_private_task' || msgType === 'task_push') {
+      await this.handleTaskPush(task);
+    } else if (msgType === 'task_cancel') {
+      await this.handleTaskCancel(task);
+    } else if (msgType === 'task_update') {
+      this.logger.debug('收到任务更新（暂不处理）', { taskId: task.taskId });
+    } else {
+      this.logger.debug('未处理的任务消息类型', { type: msgType });
+    }
+  }
+
+  /**
+   * 处理交互消息（私信、评论等）
+   * 参照 OpenClaw 插件的消息处理模式：LLM 评估 + 异步回复
+   */
+  private async handleInteractionMessage(message: any): Promise<void> {
+    const msgType = message.type;
+
+    switch (msgType) {
+      case 'new_private_message': {
+        const privateMsg = message.payload?.message || message.data?.message;
+        if (!privateMsg) {
+          this.logger.debug('私信消息缺少 message 数据', { type: msgType });
+          return;
+        }
+
+        // 不回复自己的消息
+        if (privateMsg.sender_id === this.config.platform.botId) {
+          return;
+        }
+
+        // 任务类私信（带 related_task_id）暂不处理，等后续完善
+        if (privateMsg.message_type === 'task' && privateMsg.related_task_id) {
+          this.logger.info(`收到任务私信 [${privateMsg.related_task_id}]，暂走默认处理`);
+        }
+
+        this.logger.info(`💌 收到私信: ${privateMsg.sender?.nickname || privateMsg.sender_id}: ${privateMsg.content?.substring(0, 50)}`);
+
+        // 异步处理私信回复（不阻塞消息循环）
+        this.handlePrivateMessageReply(privateMsg, message).catch(err => {
+          this.logger.error('私信回复异常', err);
+        });
+        break;
+      }
+
+      case 'new_message': {
+        const innerMsg = message.payload?.message || message.data?.message;
+        if (!innerMsg) return;
+
+        // 评论通知
+        if (innerMsg.type === 'comment') {
+          this.logger.info(`📬 收到评论: ${innerMsg.commenterNickname} 评论了你的推文`);
+          this.handleCommentReply(innerMsg, message).catch(err => {
+            this.logger.error('评论回复异常', err);
+          });
+        }
+        break;
+      }
+
+      case 'comment': {
+        const commentMsg = message.payload || message.data;
+        if (!commentMsg) return;
+        this.logger.info(`💬 收到评论通知`, { type: msgType });
+        break;
+      }
+
+      default:
+        this.logger.debug('未处理的交互消息', { type: msgType });
+        break;
+    }
+  }
+
+  /**
+   * 处理系统消息（任务拒绝、关闭等）
+   */
+  private handleSystemMessage(message: any): void {
+    switch (message.type) {
+      case 'task_rejected': {
+        const payload = message.payload || message.data;
+        this.logger.warn(`⚠️ 工作成果被拒收`, { taskId: payload?.taskId, reason: payload?.reason });
+        break;
+      }
+      case 'task_closed': {
+        const payload = message.payload || message.data;
+        this.logger.info(`📋 任务已关闭`, { taskId: payload?.taskId });
+        // 清理状态
+        const taskId = payload?.taskId;
+        if (taskId) {
+          this.stateMachine.tryTransition(taskId, 'cancelled', '任务关闭');
+          this.concurrency.cancelTask(taskId);
+          this.clearTaskTimeout(taskId);
+          this.stateMachine.cleanup(taskId);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /**
+   * 私信回复处理：调用 LLM 生成回复并通过 API 发送
+   */
+  private async handlePrivateMessageReply(privateMsg: any, rawMessage: any): Promise<void> {
+    try {
+      const personality = this.config.personality;
+      const senderName = privateMsg.sender?.nickname || '用户';
+      const content = privateMsg.content || '';
+
+      // 构建 LLM prompt
+      const systemPrompt = personality.customSystemPrompt ||
+        `你是${personality.name || '打工虾'}，语气${personality.tone || '友好热情'}。` +
+        (personality.bio ? `简介：${personality.bio}` : '') +
+        '\n\n你收到了一条站内私信，请生成简短的回复（1-3句话）。' +
+        '\n回复要求：自然、友好、简洁，符合你的人格设定。' +
+        '\n不要重复对方说过的话。如果对方在问问题，认真回答。' +
+        '\n只输出回复内容，不要加引号或前缀。';
+
+      const result = await this.agentEngine.generateReply(
+        systemPrompt,
+        `来自${senderName}的私信：\n${content}`,
+      );
+
+      if (result) {
+        const sendResult = await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          privateMsg.sender_id,
+          result,
+        );
+        if (sendResult.success) {
+          this.logger.info(`💌 已回复私信 → ${senderName}: ${result.substring(0, 50)}`);
+        } else {
+          this.logger.warn(`💌 私信回复失败`, { error: sendResult.error });
+        }
+      } else {
+        this.logger.debug('私信回复为空，跳过回复');
+      }
+    } catch (err) {
+      this.logger.error('私信回复处理异常', err);
+    }
+  }
+
+  /**
+   * 评论回复处理：调用 LLM 评估是否需要回复
+   */
+  private async handleCommentReply(commentMsg: any, rawMessage: any): Promise<void> {
+    try {
+      const personality = this.config.personality;
+
+      const systemPrompt = personality.customSystemPrompt ||
+        `你是${personality.name || '打工虾'}，语气${personality.tone || '友好热情'}。` +
+        '\n\n有人评论了你的推文，请决定是否回复。' +
+        '\n如果评论是问题或有实质性内容，应该回复。' +
+        '\n如果只是"好"、"赞"之类的简单表态，可以不回复。' +
+        '\n回复要求：自然、简短（1-2句话）。' +
+        '\n只输出回复内容，如果不需要回复则输出"__SKIP__"。';
+
+      const commentContent = commentMsg.content || '';
+      const commenterName = commentMsg.commenterNickname || '用户';
+
+      const result = await this.agentEngine.generateReply(
+        systemPrompt,
+        `评论者: ${commenterName}\n评论内容: ${commentContent}`,
+      );
+
+      if (result && result !== '__SKIP__') {
+        const sendResult = await this.platformApi.postComment(
+          commentMsg.tweetId,
+          result,
+        );
+        if (sendResult.success) {
+          this.logger.info(`📬 已回复评论 → ${commenterName}: ${result.substring(0, 50)}`);
+        } else {
+          this.logger.warn(`📬 评论回复失败`, { error: sendResult.error });
+        }
+      }
+    } catch (err) {
+      this.logger.error('评论回复处理异常', err);
     }
   }
 
@@ -232,8 +419,8 @@ export class TaskManager {
 
         this.eventBus.emit(WorkerClawEvent.TASK_ACCEPTED, { taskId: task.taskId });
 
-        // 上报接单状态到平台
-        this.platformApi.updateStatus(task.taskId, 'accepted').catch(() => {});
+        // 接单：调用服务端 /api/task/:id/take
+        this.platformApi.takeTask(task.taskId).catch(() => {});
 
         // 设置任务超时
         this.setTaskTimeout(task);
@@ -289,7 +476,7 @@ export class TaskManager {
       this.stateMachine.setPermissionLevel(task.taskId, permLevel);
 
       this.eventBus.emit(WorkerClawEvent.TASK_ACCEPTED, { taskId: task.taskId });
-      this.platformApi.updateStatus(task.taskId, 'accepted').catch(() => {});
+      this.platformApi.takeTask(task.taskId).catch(() => {});
       this.setTaskTimeout(task);
 
       this.executeTask(task, permLevel).catch(err => {

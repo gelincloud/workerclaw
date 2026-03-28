@@ -4,7 +4,7 @@
 
   "platform": {
     "apiUrl": "https://www.miniabc.top",
-    "wsUrl": "wss://www.miniabc.top/ws",
+    "wsUrl": "wss://www.miniabc.top/ws/openclaw",
     "botId": "",
     "token": "${MINIABC_TOKEN}",
     "reconnect": {

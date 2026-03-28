@@ -100,6 +100,41 @@
     - 智能活跃行为: 频率控制器+行为调度器(推文/浏览/评论/点赞)
     - AgentEngine完整重构: LLM调用循环+工具调用+人格+会话+技能
     - **WorkerClaw 框架四阶段全部完成！**
+  - Phase 5: CLI + 配置向导 + 技能包系统 (2026-03-28)
+    - 版本: 0.1.0 → 0.2.0
+    - CLI: citty命令框架 + @clack/prompts TUI + 4子命令(configure/start/status/skills)
+    - 配置向导: 5 section(platform/llm/personality/security/skills)
+    - PlatformApiClient扩展: registerAgent/getBotInfo/testConnection
+    - 技能包系统: SkillPackLoader + SkillPackRegistry (npm包+本地路径+目录扫描)
+    - 3个内置技能metadata升级v2.0 (任务类型/权限/工具声明)
+    - 测试: phase5.test.ts (需修复npm缓存权限后运行)
+    - 累计: 55+ 源文件, tsc零错误
+    - **WorkerClaw 框架五阶段全部完成！**
+  - **v0.3.1 WebSocket 协议修复** (2026-03-28)
+    - 对齐服务端 server.js 实际 WebSocket 协议
+    - 认证: `{ type: 'auth', payload: { botId, token } }` (非 URL query)
+    - 心跳: `{ type: 'heartbeat' }` (非 ping)
+    - 消息体: 服务端用 `payload`，客户端自动转换为 `data`
+    - 默认 wsUrl 修正为 `wss://www.miniabc.top/ws/openclaw`
+    - 服务端消息类型: `new_task`, `auth_success`, `pong` 等
+  - **v0.3.2-v0.3.6 一系列 CLI + 消息处理修复** (2026-03-28)
+    - v0.3.2: CLI 配置体验（Agent名称回显、API URL/模型名称改用 text()）
+    - v0.3.3: 配置流程优化（Agent名称不重复、Token完整显示、wsUrl默认值）
+    - v0.3.4: Agent名称重复修复（去 !existing?.name 条件）
+    - v0.3.5: 版本号从 package.json 动态读取；saveConfig 浅拷贝 bug 修复
+    - v0.3.6: **消息处理全面修复**（参照 OpenClaw 插件）
+      - SourceVerifier: 识别 ServerMessageType 所有实际类型；系统消息跳过 from 检查
+      - TaskManager: task/interaction/system/heartbeat 四路分发
+      - 新增交互消息处理: 私信自动回复(new_private_message)、评论自动回复(new_message)
+      - AgentEngine: 新增 generateReply() 轻量 LLM 调用
+      - PlatformApiClient: 新增 sendPrivateMessage/postComment/getTaskDetail API
+      - 配置文件路径: ~/.workerclaw/config.json
+  - **v0.3.7 LLM工具+金额阈值+API对齐** (2026-03-28)
+    - LLM客户端: 过滤 name 为空的工具定义，防 vLLM 400 错误
+    - 权限阈值: highValueThreshold 100→5000（50元才降级，2元不降级）
+    - PlatformApiClient 全面对齐服务端: takeTask(POST /api/task/:id/take)、submitWork(POST /api/task/:id/submit)
+    - reportResult() 内部调用 submitWork()；updateStatus() 改为 no-op
+    - TaskManager: acceptTask/deferTask 中 updateStatus → takeTask
 
 ### OpenClaw 平台信息
 - **版本**: 2026.3.24 (中文汉化版 `@qingchencloud/openclaw-zh`)

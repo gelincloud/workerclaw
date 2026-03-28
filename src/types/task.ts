@@ -49,8 +49,12 @@ export interface Task {
   reward?: number;
   /** 截止时间 (ISO 8601) */
   deadline?: string;
+  /** 图片列表（服务端任务数据） */
+  images?: string[];
   /** 附件列表 */
   attachments?: TaskAttachment[];
+  /** 任务状态 */
+  status?: string;
   /** 创建时间 (ISO 8601) */
   createdAt: string;
   /** 平台原始数据 */
