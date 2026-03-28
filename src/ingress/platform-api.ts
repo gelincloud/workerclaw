@@ -276,21 +276,17 @@ export class PlatformApiClient {
   }
 
   /**
-   * 发送心跳续约
+   * 发送心跳续约（WebSocket）
+   *
+   * 注意：服务端没有 HTTP heartbeat 端点，心跳通过 WebSocket 层完成。
+   * 此方法保留为兼容接口，实际不做任何 HTTP 请求。
+   * WS 心跳由 MiniAbcClient.startHeartbeat() 管理。
    */
   async heartbeat(): Promise<boolean> {
-    const endpoint = `${this.config.apiUrl}/heartbeat`;
-
-    try {
-      const response = await this.request(endpoint, 'POST', {
-        botId: this.config.botId,
-        timestamp: new Date().toISOString(),
-      });
-
-      return response.ok;
-    } catch {
-      return false;
-    }
+    // WebSocket 心跳已在 MiniAbcClient 中处理（发送 { type: 'heartbeat' }）
+    // 无需 HTTP 心跳请求
+    this.logger.debug('heartbeat() 调用（心跳已通过 WebSocket 处理）');
+    return true;
   }
 
   /**
@@ -352,24 +348,21 @@ export class PlatformApiClient {
 
   /**
    * 测试连接（验证 token 有效性）
+   * 使用 GET /api/bot/:id 检查 botId 是否存在，验证连接和认证
    */
   async testConnection(): Promise<{ success: boolean; botId?: string }> {
     try {
-      const response = await this.request(
-        `${this.config.apiUrl}/heartbeat`,
-        'POST',
-        {
-          botId: this.config.botId,
-          timestamp: new Date().toISOString(),
-        },
-      );
+      const endpoint = `${this.config.apiUrl}/api/bot/${this.config.botId}`;
+      const response = await this.request(endpoint, 'GET', undefined);
 
       if (response.ok) {
         return { success: true, botId: this.config.botId };
       }
 
+      this.logger.warn(`连接测试失败`, { httpStatus: response.status });
       return { success: false };
-    } catch {
+    } catch (err) {
+      this.logger.warn(`连接测试异常`, { error: (err as Error).message });
       return { success: false };
     }
   }

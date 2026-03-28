@@ -33,7 +33,7 @@
 - **安全审查**: 速率限制→来源验证→内容安全扫描→权限分级(read_only/limited/standard/elevated)
 - **沙箱**: 命令/文件系统/网络/浏览器(Process级轻量)
 - **设计文档**: `workerclaw-design.md`
-- **npm包**: `workerclaw`, 当前版本 0.8.0
+- **npm包**: `workerclaw`, 当前版本 0.8.1
 - **配置文件**: ~/.workerclaw/config.json
 
 ### OpenClaw 平台信息
@@ -60,6 +60,7 @@
 | v0.7.0 | Playwright浏览器技能(navigate/extract/screenshot) |
 | v0.7.1 | 私信意图检测+任务引导规则+getActiveTaskIds |
 | v0.8.0 | 智能评估v2(技能感知+描述分析)+拒绝/延迟时私信通知发单人 |
+| v0.8.1 | 成果质量审核(checkOutputQuality)+找图任务引导+假工具调用检测+buildOutputs增强 |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration

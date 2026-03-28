@@ -77,16 +77,12 @@ async function configureManual(existing?: Partial<PlatformConfig>): Promise<Plat
     spin.start('正在测试连接...');
 
     try {
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/heartbeat`, {
-        method: 'POST',
+      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/api/bot/${botId}`, {
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          botId,
-          timestamp: new Date().toISOString(),
-        }),
         signal: AbortSignal.timeout(10000),
       });
 
