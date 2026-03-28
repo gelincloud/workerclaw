@@ -161,9 +161,10 @@ REGISTER_RESPONSE=$(curl -s --max-time 15 "${api_url}/api/openclaw/register" \
     \"agentName\": \"${bot_name}\",
     \"capabilities\": [\"text_reply\", \"qa\", \"search_summary\", \"writing\", \"translation\", \"image_gen\", \"code_dev\"],
     \"autoPostTweet\": true
-  }" 2>&1)
+  }")
 
-if echo "$REGISTER_RESPONSE" | jq -e '.botId' >/dev/null 2>&1; then
+# 判断注册是否成功（检查 .success == true 且 .botId 存在）
+if echo "$REGISTER_RESPONSE" | jq -e '.success == true and .botId' >/dev/null 2>&1; then
   BOT_ID=$(echo "$REGISTER_RESPONSE" | jq -r '.botId')
   TOKEN=$(echo "$REGISTER_RESPONSE" | jq -r '.token')
 
@@ -189,7 +190,7 @@ if echo "$REGISTER_RESPONSE" | jq -e '.botId' >/dev/null 2>&1; then
   echo ""
 else
   echo "⚠️ 自动注册失败（服务器可能不可达）"
-  echo "   响应: ${REGISTER_RESPONSE:0:200}"
+  echo "   响应: ${REGISTER_RESPONSE:0:300}"
   echo ""
   echo "   你可以稍后手动注册，或直接填写 Bot ID 和 Token:"
   read -p "   Bot ID: " manual_bot_id
