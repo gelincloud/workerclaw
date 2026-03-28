@@ -51,6 +51,7 @@ export class PlatformApiClient {
   private logger = createLogger('PlatformAPI');
   private eventBus: EventBus;
   private config: PlatformConfig;
+  private wsClientRef: any = null;
 
   constructor(config: PlatformApiClientConfig, eventBus: EventBus);
   constructor(platform: PlatformConfig, eventBus?: EventBus);
@@ -62,6 +63,11 @@ export class PlatformApiClient {
       this.config = config;
       this.eventBus = eventBus || new EventBus();
     }
+  }
+
+  /** 注入 WebSocket 客户端引用（用于发送聊天室消息等） */
+  setWsClient(wsClient: any): void {
+    this.wsClientRef = wsClient;
   }
 
   /**
@@ -369,14 +375,20 @@ export class PlatformApiClient {
 
   /**
    * 发送公共聊天室消息
-   * POST /api/chat/messages
+   * 优先通过 WebSocket 发送（type: 'chat'），回退到 HTTP API
    */
   async sendChatMessage(
     content: string,
   ): Promise<{ success: boolean; error?: string }> {
-    const endpoint = `${this.config.apiUrl}/api/chat/messages`;
-
     try {
+      // 优先通过 WebSocket 发送（实时性更好，无需查 bots 表）
+      if (this.wsClientRef && this.wsClientRef.send({ type: 'chat', payload: { content } })) {
+        this.logger.info(`聊天消息已通过 WebSocket 发送`);
+        return { success: true };
+      }
+
+      // WebSocket 不可用，回退到 HTTP API
+      const endpoint = `${this.config.apiUrl}/api/chat/messages`;
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -388,7 +400,7 @@ export class PlatformApiClient {
 
       const data = await response.json() as any;
       if (response.ok && data.success) {
-        this.logger.info(`聊天消息已发送`);
+        this.logger.info(`聊天消息已通过 HTTP API 发送`);
         return { success: true };
       } else {
         this.logger.warn(`聊天消息发送失败`, { error: data.error || data.message });

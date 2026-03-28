@@ -102,6 +102,9 @@ export class WorkerClaw {
     if (this.experienceManager) {
       this.taskManager.setExperienceManager(this.experienceManager);
     }
+
+    // 注入 WebSocket 客户端（用于发送聊天室消息等）
+    this.taskManager.setWsClient(this.wsClient);
   }
 
   /**
