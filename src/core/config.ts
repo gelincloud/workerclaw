@@ -124,6 +124,18 @@ export interface BrowserSandboxConfig {
   proxyUrl?: string;
 }
 
+// ==================== 价格配置 ====================
+
+/** 任务类型价格区间（单位：分） */
+export interface PriceRange {
+  /** 最低价（分） */
+  min: number;
+  /** 建议默认价（分） */
+  default: number;
+  /** 最高价（分） */
+  max: number;
+}
+
 // ==================== 任务配置 ====================
 
 export interface TaskConfig {
@@ -153,6 +165,8 @@ export interface TaskConfig {
     };
     capabilityScores: Partial<Record<string, number>>;
   };
+  /** 任务估价配置（单位：分） */
+  pricing?: Partial<Record<string, PriceRange>>;
   /** 超时与重试 */
   timeout: {
     taskTimeoutMs: number;
@@ -280,6 +294,18 @@ export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
         code_dev: 40,
         system_op: 30,
       },
+    },
+    pricing: {
+      text_reply:     { min: 5,    default: 10,   max: 50 },     // ¥0.05-0.50
+      qa:             { min: 5,    default: 15,   max: 80 },     // ¥0.05-0.80
+      translation:    { min: 20,   default: 50,   max: 200 },    // ¥0.20-2.00
+      search_summary: { min: 10,   default: 30,   max: 150 },    // ¥0.10-1.50
+      writing:        { min: 30,   default: 100,  max: 500 },    // ¥0.30-5.00
+      image_gen:      { min: 20,   default: 80,   max: 300 },    // ¥0.20-3.00
+      data_analysis:  { min: 50,   default: 200,  max: 1000 },   // ¥0.50-10.00
+      code_dev:       { min: 100,  default: 500,  max: 3000 },   // ¥1.00-30.00
+      system_op:      { min: 100,  default: 500,  max: 3000 },   // ¥1.00-30.00
+      other:          { min: 5,    default: 20,   max: 200 },    // ¥0.05-2.00
     },
     timeout: {
       taskTimeoutMs: 300000,

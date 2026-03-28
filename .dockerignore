@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+logs/
+*.md
+.git/
+.workbuddy/
+tests/
+vitest.config.ts
+tsconfig.json
+docker-data/
+.env

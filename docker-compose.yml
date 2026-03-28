@@ -1,0 +1,22 @@
+# WorkerClaw Docker Compose
+#
+# 部署步骤:
+#   1. 运行初始化: bash init-config.sh
+#   2. 启动: docker compose up -d
+#   3. 日志: docker compose logs -f
+#   4. 停止: docker compose down
+
+services:
+  workerclaw:
+    build: .
+    container_name: workerclaw
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./docker-data:/app/data
+    security_opt:
+      - seccomp:unconfined
+    shm_size: '2gb'
+
+volumes:
+  workerclaw-data:

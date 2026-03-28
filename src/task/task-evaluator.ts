@@ -16,13 +16,16 @@ import { createLogger } from '../core/logger.js';
 import type {
   Task, TaskEvaluation, EvaluationContext, TaskEvaluatorConfig, TaskType,
 } from '../types/task.js';
+import type { PriceRange } from '../core/config.js';
 
 export class TaskEvaluator {
   private logger = createLogger('TaskEvaluator');
   private config: TaskEvaluatorConfig;
+  private pricingConfig: Partial<Record<string, PriceRange>>;
 
-  constructor(config: TaskEvaluatorConfig) {
+  constructor(config: TaskEvaluatorConfig, pricingConfig?: Partial<Record<string, PriceRange>>) {
     this.config = config;
+    this.pricingConfig = pricingConfig || {};
   }
 
   /**
@@ -107,6 +110,156 @@ export class TaskEvaluator {
     }
 
     return parts.join('\n');
+  }
+
+  /**
+   * 估算任务价格区间
+   *
+   * 根据任务类型 + 描述复杂度给出一个估价范围
+   * 用于在私信中回复用户的价格咨询
+   */
+  estimatePrice(taskType: string, description?: string): {
+    min: number;   // 最低价（分）
+    max: number;   // 最高价（分）
+    suggested: number; // 建议价（分）
+    confidence: 'high' | 'medium' | 'low'; // 估价置信度
+    type: string;  // 匹配到的任务类型
+    reasoning: string; // 估价理由
+  } {
+    // 1. 按任务类型匹配价格区间
+    const typeRange = this.pricingConfig[taskType] ?? null;
+    let matchedType = taskType;
+    let range: PriceRange | null = typeRange;
+
+    // 如果没匹配到具体类型，尝试从描述推断
+    if (!range && description) {
+      const inferred = this.inferTaskTypeFromDescription(description);
+      if (inferred) {
+        range = this.pricingConfig[inferred] ?? null;
+        matchedType = inferred;
+      }
+    }
+
+    // 兜底：other
+    if (!range) {
+      range = this.pricingConfig['other'] || { min: 5, default: 20, max: 200 };
+      matchedType = 'other';
+    }
+
+    // 2. 根据描述复杂度微调价格
+    let complexityMultiplier = 1.0;
+    let confidence: 'high' | 'medium' | 'low' = 'high';
+    const desc = (description || '').toLowerCase();
+
+    // 复杂度指标
+    const complexityFactors = this.assessComplexity(desc);
+
+    if (complexityFactors.isSimple) {
+      complexityMultiplier = 0.6;
+      confidence = 'high';
+    } else if (complexityFactors.isComplex) {
+      complexityMultiplier = 1.8;
+      confidence = 'medium';
+    }
+
+    // 描述为空时降低置信度
+    if (!description || description.length < 5) {
+      confidence = 'low';
+    }
+
+    // 计算最终价格
+    const min = Math.max(1, Math.round(range.min * complexityMultiplier));
+    const max = Math.round(range.max * complexityMultiplier);
+    const suggested = Math.round(range.default * complexityMultiplier);
+
+    // 构建估价理由
+    let reasoning = `任务类型: ${matchedType}`;
+    if (complexityMultiplier !== 1.0) {
+      reasoning += `，复杂度${complexityMultiplier > 1 ? '较高' : '较低'}`;
+    }
+    reasoning += `，建议 ¥${(suggested / 100).toFixed(2)} 左右`;
+
+    return {
+      min,
+      max,
+      suggested,
+      confidence,
+      type: matchedType,
+      reasoning,
+    };
+  }
+
+  /**
+   * 从描述内容推断任务类型
+   */
+  private inferTaskTypeFromDescription(description: string): string | null {
+    const desc = description.toLowerCase();
+
+    // 图片相关 → image_gen
+    if (/图|画|壁纸|头像|背景|截图|照片|logo|海报/.test(desc)) {
+      return 'image_gen';
+    }
+
+    // 写作相关 → writing
+    if (/写.*文章|写.*文案|写.*脚本|写.*帖子|写作|文案|小说|故事|报告/.test(desc)) {
+      return 'writing';
+    }
+
+    // 翻译 → translation
+    if (/翻译|英文|中文|日文|韩文|translate/.test(desc)) {
+      return 'translation';
+    }
+
+    // 搜索/调研 → search_summary
+    if (/搜索|查找|调研|搜集|资料|搜.*信息|找.*信息|查一下/.test(desc)) {
+      return 'search_summary';
+    }
+
+    // 数据分析 → data_analysis
+    if (/分析|统计|数据|图表|报表|计算/.test(desc)) {
+      return 'data_analysis';
+    }
+
+    // 代码/开发 → code_dev
+    if (/代码|编程|开发|程序|网站|网页|app|接口|api/.test(desc)) {
+      return 'code_dev';
+    }
+
+    return null;
+  }
+
+  /**
+   * 评估描述的复杂度
+   */
+  private assessComplexity(desc: string): { isSimple: boolean; isComplex: boolean } {
+    // 简单任务特征：短、单一需求、无修饰词
+    const simplePatterns = [
+      /^.{1,15}$/,                          // 非常短
+      /简单|随便|随便.*就行|快速|帮.*一下/,
+      /查.*个|找.*个|翻译.*句|回答.*个/,
+    ];
+
+    // 复杂任务特征：长、多需求、有修饰
+    const complexPatterns = [
+      /并且|同时|还要|另外|以及|加上/,     // 多个需求
+      /详细|深入|全面|完整|专业/,            // 高质量要求
+      /至少|以上|不少于|超过/,               // 数量要求
+      /排版|格式|模板|表格|多页/,            // 格式要求
+      /.{100,}/,                             // 很长的描述
+    ];
+
+    let isSimple = false;
+    let isComplex = false;
+
+    for (const p of simplePatterns) {
+      if (p.test(desc)) { isSimple = true; break; }
+    }
+
+    for (const p of complexPatterns) {
+      if (p.test(desc)) { isComplex = true; break; }
+    }
+
+    return { isSimple, isComplex };
   }
 
   /**

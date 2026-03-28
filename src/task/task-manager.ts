@@ -20,6 +20,7 @@ import type {
   Task, TaskResult, TaskExecutionContext, TaskEvaluation, EvaluationContext,
 } from '../types/task.js';
 import type { PlatformConfig, LLMConfig, SecurityConfig, TaskConfig } from '../core/config.js';
+import type { PriceRange } from '../core/config.js';
 import type { PermissionLevel } from '../types/agent.js';
 import type { ExperienceManager } from '../experience/index.js';
 
@@ -87,8 +88,8 @@ export class TaskManager {
     // Phase 3: 状态机
     this.stateMachine = new TaskStateMachine(eventBus);
 
-    // Phase 3: 评估器
-    this.evaluator = new TaskEvaluator(config.task.evaluation);
+    // Phase 3: 评估器（传入价格配置）
+    this.evaluator = new TaskEvaluator(config.task.evaluation, config.task.pricing);
 
     // Phase 3: 并发控制器
     this.concurrency = new ConcurrencyController(config.task.concurrency, eventBus);
@@ -557,11 +558,15 @@ export class TaskManager {
       // 0. 意图检测前置：操作关键词正则预过滤
       const actionKeywordRegex = /撤销|取消|放弃|退单|不要了|不做了|进度|进展|怎么样了|做完了吗|查.*进度/;
       const taskRequestRegex = /帮我|能帮我|帮忙|请帮我|能不能|会不会|可不可以|做.*视频|写.*文章|搜.*图|找.*图|画.*图|生成.*图|做个|写个|翻译|分析|处理|下载|查一下|搜一下/;
+      const priceKeywordRegex = /多少钱|什么价|费用|价格|报价|收费|报酬|成本|贵不贵|便宜|砍价|能便宜吗|优惠|我出.*元|我出.*块|给.*钱/;
       const hasActionKeyword = actionKeywordRegex.test(content);
       const hasTaskRequestKeyword = taskRequestRegex.test(content);
+      const hasPriceKeyword = priceKeywordRegex.test(content);
 
-      // 1. 操作意图检测（撤销任务、查询进度）
-      if (content.length > 10 || (content.length > 3 && hasActionKeyword)) {
+      // 1. 操作意图检测（撤销任务、查询进度、价格咨询）
+      // 价格关键词也触发意图检测，降低触发阈值（5字符）
+      const intentMinLength = hasPriceKeyword ? 3 : 10;
+      if (content.length > intentMinLength || (content.length > 3 && hasActionKeyword) || hasPriceKeyword) {
         const intentResult = await Promise.race([
           this.detectIntent(content, privateMsg.sender_id),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 10000)),
@@ -595,6 +600,10 @@ export class TaskManager {
 - 对方只是闲聊、问候、聊天，正常回应即可，不需要每次都提发任务。
 - 对方问"你能做什么"，简要介绍自己的能力，并说"发个任务给我试试就知道了"。
 - 绝对不要在聊天中直接帮对方完成任务，也不要说"我做不了"，而是说"给我发个任务吧"。
+- 如果对方问到价格/费用，简单说"价格看你具体需求，你先说说想做什么，我给你估个价～"即可。
+  不要给出具体数字，因为详细估价已经由意图检测系统处理。
+- 注意：如果这条消息是关于价格/费用的问题，它应该已经被前置的意图检测系统拦截处理了。
+  如果你看到这条消息，说明它不是价格咨询，请正常回复。
 
 回复要求：自然、友好、简洁（1-3句话），符合你的人格设定。不要重复对方说过的话。只输出回复内容，不要加引号或前缀。`;
 
@@ -625,7 +634,7 @@ export class TaskManager {
   }
 
   /**
-   * 检测私信中的操作意图（撤销任务、查询进度）
+   * 检测私信中的操作意图（撤销任务、查询进度、价格咨询）
    * 参照 OpenClaw 插件的 detectAndExecuteIntent 设计
    *
    * 返回: { action, message } 或 null
@@ -643,10 +652,14 @@ export class TaskManager {
 2. check_progress - 查询任务进度
    关键词：进度、进展、怎么样了、做了吗、完成了吗、查一下进度、任务状态、什么时候能好
 
+3. price_inquiry - 价格/费用/报酬咨询
+   关键词：多少钱、费用、价格、报价、什么价、收费、报酬、成本、贵不贵、便宜、砍价、讨价还价、能便宜吗、优惠
+   也包括用户给出一个价格说"X元做XX"这种还价场景
+
 如果没有检测到明确意图，返回 null。
 
 返回格式（严格JSON，不要输出其他内容）：
-{"intent": "cancel_task" 或 "check_progress" 或 null, "confidence": 0到1}`;
+{"intent": "cancel_task" 或 "check_progress" 或 "price_inquiry" 或 null, "confidence": 0到1}`;
 
       const result = await this.agentEngine.generateReply(
         systemPrompt,
@@ -699,11 +712,177 @@ export class TaskManager {
         return { action: 'check_progress', message: '目前没有正在执行中的任务哦，您可以随时发任务给我！' };
       }
 
+      if (parsed.intent === 'price_inquiry') {
+        // 价格咨询 → 转到专门的估价处理
+        const priceReply = await this.handlePriceInquiry(content);
+        return { action: 'price_inquiry', message: priceReply };
+      }
+
       return null;
     } catch (err) {
       this.logger.error('意图检测异常', { error: (err as Error).message });
       return null;
     }
+  }
+
+  /**
+   * 处理价格咨询/讨价还价
+   *
+   * 策略：
+   * - 用户描述了需求 → 基于任务类型估价，给出价格区间
+   * - 用户只问价没说需求 → 反问需求再估价
+   * - 用户给了一个价格还价 → 评估是否合理
+   */
+  private async handlePriceInquiry(content: string): Promise<string> {
+    try {
+      const botName = this.config.personality.name || '打工虾';
+
+      // 先用 LLM 分析用户的意图和具体需求
+      const analysisPrompt = `你是${botName}，一个 AI Agent 助手。用户在询问任务价格。
+请分析用户的消息，提取以下信息：
+
+1. 用户是否提到了具体的任务需求（如"做个PPT"、"找个图片"、"翻译一段话"）
+2. 用户是否给出了自己的出价（如"5块行不行"、"我出10元"）
+3. 任务的复杂度描述（如"简单的"、"详细的"、"专业的"）
+
+返回严格JSON格式，不要输出其他内容：
+{"hasSpecificTask": true或false, "taskDescription": "提取的任务描述或null", "userOffer": 用户出价的分（整数）或null, "complexityHint": "simple"或"normal"或"complex"或null}`;
+
+      const analysis = await this.agentEngine.generateReply(
+        analysisPrompt,
+        `用户消息: "${content}"`,
+      );
+
+      let parsed: { hasSpecificTask?: boolean; taskDescription?: string | null; userOffer?: number | null; complexityHint?: string | null } = {};
+      if (analysis) {
+        const jsonMatch = analysis.match(/\{[\s\S]*?\}/);
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[0]);
+        }
+      }
+
+      // 情况 A: 用户有具体任务需求
+      if (parsed.hasSpecificTask && parsed.taskDescription) {
+        // 从描述推断任务类型
+        const inferredType = this.inferTaskTypeForPricing(parsed.taskDescription);
+        const estimate = this.evaluator.estimatePrice(inferredType, parsed.taskDescription);
+
+        // 转换为元显示
+        const minYuan = (estimate.min / 100).toFixed(2);
+        const maxYuan = (estimate.max / 100).toFixed(2);
+        const suggestedYuan = (estimate.suggested / 100).toFixed(2);
+
+        // 如果用户出了价，评估是否合理
+        if (parsed.userOffer && parsed.userOffer > 0) {
+          return this.evaluateUserOffer(parsed.userOffer, estimate, parsed.taskDescription);
+        }
+
+        // 没有出价，给出估价
+        const replyPrompt = `你是${botName}，语气${this.config.personality.tone || '友好热情'}。
+用户想了解某个任务的价格，你刚做了一个估价。
+
+估价结果：
+- 任务类型: ${estimate.type}
+- 价格区间: ¥${minYuan} - ¥${maxYuan}
+- 建议价: ¥${suggestedYuan}
+- 估价理由: ${estimate.reasoning}
+
+请用自然、友好的方式告诉用户这个估价，并引导用户发任务。
+要求：
+1. 不要显得像机器人报数字，要自然地说出来
+2. 提到价格只是一个参考，具体看需求
+3. 引导用户通过"新建任务"发给你
+4. 回复1-3句话，简洁自然
+5. 只输出回复内容，不要加引号`;
+
+        const reply = await this.agentEngine.generateReply(replyPrompt, '');
+        return reply || `这个任务大概 ¥${minYuan} 到 ¥${maxYuan} 左右～你可以在聊天窗口点"新建任务"发给我，我接了就能开始！`;
+      }
+
+      // 情况 B: 用户只问了价格，没说具体需求
+      const genericReplyPrompt = `你是${botName}，语气${this.config.personality.tone || '友好热情'}。
+用户在问"要多少钱"/"什么价格"，但没有说明具体要做什么任务。
+
+请自然地反问用户想做什么，表示价格取决于具体需求。
+例如可以问：你想做什么呀？是找图片、写文章、翻译还是别的？你说说需求，我给你估个价～
+
+要求：
+1. 不要列清单式地列举所有可能，太长了
+2. 自然友好，1-2句话
+3. 只输出回复内容，不要加引号`;
+
+      const reply = await this.agentEngine.generateReply(genericReplyPrompt, '');
+      return reply || '这得看你具体要做什么呀～你描述一下需求，我给你估个价！';
+    } catch (err) {
+      this.logger.error('价格咨询处理异常', { error: (err as Error).message });
+      return '价格要看具体需求哦～你先说说想做什么，我给你估个价！';
+    }
+  }
+
+  /**
+   * 评估用户出价是否合理，生成讨价还价回复
+   */
+  private async evaluateUserOffer(
+    userOfferCents: number,
+    estimate: ReturnType<TaskEvaluator['estimatePrice']>,
+    taskDescription: string,
+  ): Promise<string> {
+    const botName = this.config.personality.name || '打工虾';
+    const offerYuan = (userOfferCents / 100).toFixed(2);
+    const minYuan = (estimate.min / 100).toFixed(2);
+    const maxYuan = (estimate.max / 100).toFixed(2);
+    const suggestedYuan = (estimate.suggested / 100).toFixed(2);
+
+    let judgment: string;
+    if (userOfferCents >= estimate.min) {
+      judgment = 'reasonable'; // 合理或偏高
+    } else if (userOfferCents >= estimate.min * 0.5) {
+      judgment = 'negotiable'; // 偏低但可以商量
+    } else {
+      judgment = 'too_low'; // 太低了
+    }
+
+    const replyPrompt = `你是${botName}，语气${this.config.personality.tone || '友好热情'}。
+用户想用 ¥${offerYuan} 做 "${taskDescription}" 这个任务。
+
+你的估价：
+- 价格区间: ¥${minYuan} - ¥${maxYuan}
+- 建议价: ¥${suggestedYuan}
+
+判断：${judgment === 'reasonable' ? '用户的出价合理甚至偏高' : judgment === 'negotiable' ? '用户的出价偏低，但可以商量' : '用户的出价远低于合理价格'}
+
+回复策略：
+${judgment === 'reasonable' ? '- 直接答应，表示没问题，引导发任务' : ''}
+${judgment === 'negotiable' ? '- 委婉说明这个价格可能不太够，但如果任务比较简单可以试试，引导发任务' : ''}
+${judgment === 'too_low' ? '- 礼貌说明价格太低做不了，给出合理价格范围，但语气要友好不伤和气' : ''}
+
+要求：
+1. 自然友好，不要像机器报价
+2. 1-3句话
+3. ${judgment === 'too_low' ? '可以适当解释为什么这个价格做不了' : ''}
+4. ${judgment !== 'too_low' ? '引导用户发任务' : ''}
+5. 只输出回复内容，不要加引号`;
+
+    const reply = await this.agentEngine.generateReply(replyPrompt, '');
+    return reply || '这个价格可能不太合适哦，要不你发个任务过来，具体聊聊？';
+  }
+
+  /**
+   * 从描述推断任务类型（用于估价）
+   */
+  private inferTaskTypeForPricing(description: string): string {
+    const desc = description.toLowerCase();
+
+    if (/图|画|壁纸|头像|背景|截图|照片|logo|海报/.test(desc)) return 'image_gen';
+    if (/写.*文章|写.*文案|写.*脚本|写.*帖子|写作|文案|小说|故事|报告/.test(desc)) return 'writing';
+    if (/翻译|英文|中文|日文|韩文|translate/.test(desc)) return 'translation';
+    if (/搜索|查找|调研|搜集|资料|搜.*信息|找.*信息|查一下/.test(desc)) return 'search_summary';
+    if (/分析|统计|数据|图表|报表|计算/.test(desc)) return 'data_analysis';
+    if (/代码|编程|开发|程序|网站|网页|app|接口|api/.test(desc)) return 'code_dev';
+    if (/回答|问题|解释|说明|聊天|对话/.test(desc)) return 'qa';
+    if (/回复|回信|消息|评论/.test(desc)) return 'text_reply';
+
+    return 'other';
   }
 
   /**
