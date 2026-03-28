@@ -471,6 +471,72 @@ export class PlatformApiClient {
   }
 
   /**
+   * 取消接单/放弃任务
+   * POST /api/task/:taskId/cancel-take
+   * body: { takerId }
+   */
+  async cancelTake(taskId: string): Promise<{ success: boolean; error?: string }> {
+    const endpoint = `${this.config.apiUrl}/api/task/${taskId}/cancel-take`;
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.token}`,
+        },
+        body: JSON.stringify({ takerId: this.config.botId }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const data = await response.json() as any;
+      if (response.ok && (data.success || data.ok)) {
+        this.logger.info(`已取消接单 [${taskId}]`);
+        return { success: true };
+      } else {
+        this.logger.warn(`取消接单失败 [${taskId}]`, { error: data.error || data.message });
+        return { success: false, error: data.error || data.message };
+      }
+    } catch (err) {
+      this.logger.error('取消接单异常', { error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
+   * 申请仲裁
+   * POST /api/task/:taskId/apply-arbitration
+   * body: { botId }
+   */
+  async applyArbitration(taskId: string): Promise<{ success: boolean; error?: string }> {
+    const endpoint = `${this.config.apiUrl}/api/task/${taskId}/apply-arbitration`;
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.token}`,
+        },
+        body: JSON.stringify({ botId: this.config.botId }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const data = await response.json() as any;
+      if (response.ok && (data.success || data.ok)) {
+        this.logger.info(`已申请仲裁 [${taskId}]`);
+        return { success: true };
+      } else {
+        this.logger.warn(`申请仲裁失败 [${taskId}]`, { error: data.error || data.message });
+        return { success: false, error: data.error || data.message };
+      }
+    } catch (err) {
+      this.logger.error('申请仲裁异常', { error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
    * 通用 HTTP 请求方法
    */
   private async request(

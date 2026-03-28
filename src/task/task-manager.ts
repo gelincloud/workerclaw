@@ -69,6 +69,10 @@ export class TaskManager {
   // 超时管理
   private taskTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
+  // 拒收重试计数器（taskId → 重试次数）
+  private rejectionRetryCount = new Map<string, number>();
+  private static readonly MAX_REJECTION_RETRIES = 2; // 最多自动重新执行 2 次
+
   constructor(config: TaskManagerConfig, eventBus: EventBus, securityGate: SecurityGate) {
     this.config = config;
     this.eventBus = eventBus;
@@ -260,13 +264,28 @@ export class TaskManager {
   }
 
   /**
-   * 处理系统消息（任务拒绝、关闭等）
+   * 处理系统消息（任务拒收、关闭、仲裁等）
    */
   private handleSystemMessage(message: any): void {
     switch (message.type) {
       case 'task_rejected': {
         const payload = message.payload || message.data;
-        this.logger.warn(`⚠️ 工作成果被拒收`, { taskId: payload?.taskId, reason: payload?.reason });
+        const taskId = payload?.taskId;
+        const reason = payload?.reason || '未提供拒收原因';
+        const remainingRevisions = payload?.remainingRevisions ?? 0;
+
+        this.logger.warn(`⚠️ 工作成果被拒收`, {
+          taskId,
+          reason,
+          remainingRevisions,
+        });
+
+        // 异步处理拒收（不阻塞消息循环）
+        if (taskId) {
+          this.handleRejection(taskId, reason, remainingRevisions).catch(err => {
+            this.logger.error('拒收处理异常', { taskId, error: (err as Error).message });
+          });
+        }
         break;
       }
       case 'task_closed': {
@@ -279,6 +298,20 @@ export class TaskManager {
           this.concurrency.cancelTask(taskId);
           this.clearTaskTimeout(taskId);
           this.stateMachine.cleanup(taskId);
+          this.rejectionRetryCount.delete(taskId);
+        }
+        break;
+      }
+      case 'task_arbitration_resolved': {
+        const payload = message.payload || message.data;
+        this.logger.info(`⚖️ 仲裁结果`, {
+          taskId: payload?.taskId,
+          result: payload?.result,
+        });
+        const taskId = payload?.taskId;
+        if (taskId) {
+          this.stateMachine.cleanup(taskId);
+          this.rejectionRetryCount.delete(taskId);
         }
         break;
       }
@@ -288,8 +321,233 @@ export class TaskManager {
   }
 
   /**
-   * 私信回复处理：调用 LLM 生成回复并通过 API 发送
+   * 处理工作成果被拒收
+   *
+   * 策略（由 LLM 决策）：
+   * 1. remainingRevisions > 0 且重试次数未用完 → 重新执行任务并提交
+   * 2. remainingRevisions = 0 或无法修复 → 私信告知发单人，可选择撤销
+   * 3. 发单人无理拒收 → 申请仲裁
    */
+  private async handleRejection(
+    taskId: string,
+    reason: string,
+    remainingRevisions: number,
+  ): Promise<void> {
+    const retryCount = this.rejectionRetryCount.get(taskId) || 0;
+
+    this.logger.info(`🔄 处理拒收 [${taskId}]`, {
+      reason,
+      remainingRevisions,
+      retryCount,
+    });
+
+    // 先尝试私信发单人表达歉意和沟通意愿
+    try {
+      const taskDetail = await this.platformApi.getTaskDetail(taskId);
+      const posterId = taskDetail?.publisher_id || taskDetail?.posterId;
+      const taskTitle = taskDetail?.content || taskDetail?.title || taskId;
+
+      if (posterId) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          posterId,
+          `抱歉，我的工作成果没能满足您的要求 😔\n\n` +
+          `拒收原因：${reason}\n` +
+          `剩余修改次数：${remainingRevisions}\n\n` +
+          `我会认真分析您的要求，争取这次做好！`,
+        );
+      }
+    } catch (err) {
+      this.logger.debug('发送歉意私信失败（不影响后续流程）', { error: (err as Error).message });
+    }
+
+    // 用 LLM 决定后续行动
+    const action = await this.decideRejectionAction(taskId, reason, remainingRevisions, retryCount);
+
+    this.logger.info(`🧠 LLM 决策 [${taskId}]: ${action.action}`, {
+      confidence: action.confidence,
+      reasoning: action.reasoning,
+    });
+
+    switch (action.action) {
+      case 'resubmit': {
+        // 重新执行任务并提交
+        if (retryCount >= TaskManager.MAX_REJECTION_RETRIES) {
+          this.logger.warn(`已达最大重试次数 [${taskId}]，放弃重新执行`);
+          await this.notifyCannotFix(taskId, reason, remainingRevisions);
+          return;
+        }
+
+        this.rejectionRetryCount.set(taskId, retryCount + 1);
+        this.logger.info(`🔄 重新执行任务 [${taskId}] (第 ${retryCount + 1}/${TaskManager.MAX_REJECTION_RETRIES} 次)`);
+
+        // 重新获取任务详情
+        const taskDetail = await this.platformApi.getTaskDetail(taskId);
+        if (!taskDetail) {
+          this.logger.error(`无法获取任务详情 [${taskId}]，跳过重试`);
+          return;
+        }
+
+        // 重建 Task 对象
+        const task: Task = {
+          taskId: taskDetail.id || taskId,
+          taskType: 'other',
+          title: taskDetail.title || taskDetail.content?.substring(0, 50) || '重新执行',
+          description: `【修改要求】${reason}\n\n【原始任务】${taskDetail.content || ''}`,
+          posterId: taskDetail.publisher_id || taskDetail.posterId || 'unknown',
+          posterName: taskDetail.publisher_name || taskDetail.publisherName,
+          reward: taskDetail.reward,
+          deadline: taskDetail.deadline,
+          images: taskDetail.images || [],
+          createdAt: taskDetail.created_at || taskDetail.createdAt || new Date().toISOString(),
+          raw: taskDetail,
+        };
+
+        // 重新执行
+        const permLevel = this.determinePermissionLevel(task);
+        this.stateMachine.tryTransition(taskId, 'running', '拒收后重新执行');
+        this.concurrency.tryStart(task);
+
+        try {
+          const context: TaskExecutionContext = {
+            task,
+            permissionLevel: permLevel,
+            maxOutputTokens: this.config.llm.safety.maxTokens,
+            timeoutMs: this.config.task.timeout.taskTimeoutMs,
+            receivedAt: Date.now(),
+          };
+
+          const result = await this.agentEngine.executeTask(task, context);
+          await this.reportResult(task, result);
+          this.logger.info(`✅ 重新执行完成 [${taskId}]`, { status: result.status });
+        } catch (err) {
+          this.logger.error(`重新执行失败 [${taskId}]`, { error: (err as Error).message });
+        } finally {
+          this.concurrency.taskFinished(taskId);
+        }
+        break;
+      }
+
+      case 'apologize_and_wait':
+        // 已经通知过发单人了，等发单人进一步指示
+        this.logger.info(`📝 等待发单人进一步指示 [${taskId}]`);
+        break;
+
+      case 'arbitrate': {
+        // 申请仲裁
+        this.logger.info(`⚖️ 申请仲裁 [${taskId}]`);
+        const arbResult = await this.platformApi.applyArbitration(taskId);
+        if (arbResult.success) {
+          this.logger.info(`✅ 仲裁申请成功 [${taskId}]`);
+        } else {
+          this.logger.warn(`仲裁申请失败 [${taskId}]`, { error: arbResult.error });
+        }
+        break;
+      }
+
+      case 'cancel': {
+        // 撤销任务
+        this.logger.info(`🗑️ 撤销任务 [${taskId}]`);
+        const cancelResult = await this.platformApi.cancelTake(taskId);
+        if (cancelResult.success) {
+          this.logger.info(`✅ 已撤销任务 [${taskId}]`);
+          this.stateMachine.tryTransition(taskId, 'cancelled', '拒收后协商撤销');
+        } else {
+          this.logger.warn(`撤销任务失败 [${taskId}]`, { error: cancelResult.error });
+        }
+        break;
+      }
+
+      default:
+        this.logger.warn(`未知的拒收处理动作 [${taskId}]: ${action.action}`);
+        break;
+    }
+  }
+
+  /**
+   * LLM 决定拒收后的行动
+   */
+  private async decideRejectionAction(
+    taskId: string,
+    reason: string,
+    remainingRevisions: number,
+    retryCount: number,
+  ): Promise<{ action: string; confidence: number; reasoning: string }> {
+    try {
+      const systemPrompt = `你是一个 AI Agent，你的工作成果刚刚被任务发单人拒收了。
+你需要分析拒收原因，决定下一步行动。
+
+可选行动（只选一个）：
+1. resubmit - 重新执行任务并提交（仅在拒收原因明确、可以改进时选择）
+2. apologize_and_wait - 道歉并等待发单人进一步指示（拒收原因不明确或无法自动修复时）
+3. arbitrate - 申请平台仲裁（认为发单人无理拒收、拒收理由不合理时）
+4. cancel - 撤销任务放弃执行（拒收原因超出了你的能力范围时）
+
+判断原则：
+- 如果发单人给出了明确的修改意见，且你有能力改进，选择 resubmit
+- 如果拒收理由模糊（如"不满意""质量不好"但没说具体哪里不好），选择 apologize_and_wait
+- 如果你的工作成果明显符合要求，但发单人无理拒收，选择 arbitrate
+- 如果任务要求超出你的能力（如需要特定软件、特殊权限等），选择 cancel
+- 已经重试过 ${retryCount} 次了，如果多次被拒，倾向于放弃
+
+请严格按以下 JSON 格式输出，不要输出其他内容：
+{"action": "resubmit|apologize_and_wait|arbitrate|cancel", "confidence": 0.0到1.0, "reasoning": "简要决策理由（30字以内）"}`;
+
+      const result = await this.agentEngine.generateReply(
+        systemPrompt,
+        `任务ID: ${taskId}\n拒收原因: ${reason}\n剩余修改次数: ${remainingRevisions}\n已重试次数: ${retryCount}`,
+      );
+
+      if (result) {
+        const jsonMatch = result.match(/\{[\s\S]*?\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const validActions = ['resubmit', 'apologize_and_wait', 'arbitrate', 'cancel'];
+          if (parsed.action && validActions.includes(parsed.action)) {
+            return {
+              action: parsed.action,
+              confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
+              reasoning: parsed.reasoning || 'LLM 决策',
+            };
+          }
+        }
+      }
+    } catch (err) {
+      this.logger.error('LLM 拒收决策失败', { error: (err as Error).message });
+    }
+
+    // 降级策略：remainingRevisions > 0 → resubmit，否则 → apologize_and_wait
+    const fallbackAction = remainingRevisions > 0 && retryCount < TaskManager.MAX_REJECTION_RETRIES
+      ? 'resubmit'
+      : 'apologize_and_wait';
+    return { action: fallbackAction, confidence: 0.3, reasoning: 'LLM 决策失败，使用降级策略' };
+  }
+
+  /**
+   * 通知发单人无法修复（已用完重试次数或确实做不到）
+   */
+  private async notifyCannotFix(taskId: string, reason: string, remainingRevisions: number): Promise<void> {
+    try {
+      const taskDetail = await this.platformApi.getTaskDetail(taskId);
+      const posterId = taskDetail?.publisher_id || taskDetail?.posterId;
+
+      if (posterId) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          posterId,
+          `非常抱歉，经过多次尝试，我仍然无法满足您的要求 😔\n\n` +
+          `拒收原因：${reason}\n` +
+          `剩余修改次数：${remainingRevisions}\n\n` +
+          `如果您觉得我的能力确实无法完成这个任务，建议您可以：\n` +
+          `1. 取消任务重新发布给其他打工虾\n` +
+          `2. 给我更具体的修改建议，我可以再试一次\n\n` +
+          `给您带来不便，深表歉意！`,
+        );
+      }
+    } catch (err) {
+      this.logger.debug('发送无法修复通知失败', { error: (err as Error).message });
+    }
+  }
   private async handlePrivateMessageReply(privateMsg: any, rawMessage: any): Promise<void> {
     try {
       const personality = this.config.personality;
