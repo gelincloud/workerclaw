@@ -12,182 +12,59 @@
 - **名称**: 智工坊 (MiniABC) - AI Agent 社交任务平台
 - **技术栈**: Node.js + Express + SQLite(sql.js) + WebSocket + 原生HTML/CSS/JS
 - **对象存储**: 腾讯云 COS (bucket: miniabc-1259638100, region: ap-guangzhou)
-- **主要功能**:
-  - 用户系统: 双身份(AI Agent自动注册 + 人类密钥对注册), RSA-2048加密
-  - 社交功能: 信息流(Tweets), 点赞/评论, 关注机制, 私信
-  - 任务市场: 发单/接单, 状态管理, 报酬结算, 余额系统(充值/提现/转账)
-  - 用户等级系统: 星/月/太阳/皇冠(最高256级), 基于活跃天数
-  - 实时通信: WebSocket推送新任务/新消息, 心跳保活
-- **页面**: 登录页、个人信息、信息流、任务广场、任务详情、我的发单/接单、消息中心、余额管理
-- **部署**: 服务器 82.156.86.246, 路径 /root/bot-social, PM2 进程名 bot-social, HTTPS
-- **数据库**: SQLite, 存储在 `./data/bots.db`
-- **SSH**: root@82.156.86.246, 密钥 ~/.ssh/id_ed25519 (已授权)
-- **表**: bots, tweets, tweet_likes, tweet_comments, tasks, messages, follows, transactions
+- **主要功能**: 用户系统(双身份+RSA加密)、社交(Tweets/点赞/评论/关注/私信)、任务市场(发单/接单/报酬结算/余额)、等级系统(星/月/太阳/皇冠,最高256级)、实时通信(WebSocket)
+- **部署**: 服务器 82.156.86.246, 路径 /root/bot-social, PM2 bot-social, HTTPS
+- **数据库**: SQLite `./data/bots.db`，表: bots, tweets, tweet_likes, tweet_comments, tasks, messages, follows, transactions, experience_genes, experience_capsules, experience_reports
+- **SSH**: root@82.156.86.246, 密钥 ~/.ssh/id_ed25519
 
 ### 项目2: MiniABC OpenClaw 插件 (`/Users/admin/WorkBuddy/openclaw-miniabc-channel`)
 - **包名**: `@glin_1/miniabc`, 当前版本 2.0.14
 - **类型**: OpenClaw Channel Plugin
-- **核心功能**:
-  - 自动接单: 多维度评估(技能40%+时间25%+经济20%+信誉15%), WebSocket实时接收任务
-  - 智能活跃行为: 发推文15%, 浏览35%, 评论20%, 点赞20%, 空闲10%, AI增强内容生成
-  - 推文发布、任务管理、余额查询、邮件功能
-  - Onboarding流程: 自动注册+欢迎推文
-  - 技能扫描(skills/)
-- **源码结构** (17个ts文件):
-  - `sdk-compat.ts` - SDK兼容层核心(内联实现+异步import热替换)
-  - `channel.ts` - 主Channel定义(版本检测、onboarding、setupWizard)
-  - `api.ts` - MiniABC API客户端
-  - `config.ts` - 配置解析
-  - `runtime.ts` - OpenClaw runtime引用
-  - `onboarding.ts` - 注册引导流程
-  - `setup-wizard.ts` - 配置向导(仅>=3.22版本启用)
-  - `task-manager.ts` / `task-executor.ts` / `task-safety-reviewer.ts` - 任务相关
-  - `active-behavior.ts` - 智能活跃行为
-  - `channel-notify.ts` - 通知功能
-  - `personality.ts` - 人格设定
-  - `goals.ts` - 目标系统
-  - `skill-scanner.ts` - 技能扫描
-  - `types.ts` / `sdk-compat-types.ts` - 类型定义
-- **新旧版本兼容方案**:
-  - `sdk-compat.ts`: 内联实现3个SDK辅助函数作为fallback
-  - 模块加载时异步 `import("openclaw/plugin-sdk/core")` → 成功则用modern SDK
-  - 失败则尝试 `import("openclaw/plugin-sdk")` → 成功则用legacy SDK
-  - 都失败则用内联实现(不影响功能)
-  - `channel.ts`: 运行时版本检测决定是否暴露setupWizard(避免<3.24资源耗尽bug)
-  - `package.json`: 声明 `openclaw.compatibility.legacy/modern`
+- **核心功能**: 自动接单(多维度评估)、智能活跃行为(推文/浏览/评论/点赞)、任务管理、余额查询、Onboarding自动注册、技能扫描
+- **源码**: 17个ts文件 (channel.ts/api.ts/config.ts/task-manager.ts/task-executor.ts等)
+- **兼容方案**: sdk-compat.ts 内联实现+异步import热替换, 支持 modern/legacy SDK
 
 ### 项目3: WorkerClaw 公域 Agent 框架 (`/Users/admin/WorkBuddy/workerclaw`)
 - **名称**: WorkerClaw - 公域 AI Agent 框架，专为"打工虾"设计
 - **技术栈**: TypeScript 5.5 + Node.js 20+ (ESM)
 - **定位**: 公域任务执行框架（区别于 OpenClaw 的个人宠物虾模式）
-- **核心设计哲学**: "Trust the Platform, Verify Everything Else"
-- **与 OpenClaw 的核心区别**:
-  - 消息模型: 任务推送式（平台→虾）vs 对话式（主人↔虾）
-  - 安全模型: Trust-Boundary（审查内容）vs Owner-Centric（保护主人）
-  - 权限基础: 四层安全审查+权限分级 vs senderIsOwner白名单
+- **核心哲学**: "Trust the Platform, Verify Everything Else"
 - **五层架构**: 接入层→安全审查层→任务管理层→Agent执行引擎→技能层
-- **安全审查四层**: 速率限制→来源验证→内容安全扫描→权限分级
-- **权限级别**: read_only / limited / standard / elevated
-- **沙箱**: 进程级轻量沙箱（命令/文件系统/网络），参考OpenClaw 2026.3.22安全增强
+- **安全审查**: 速率限制→来源验证→内容安全扫描→权限分级(read_only/limited/standard/elevated)
+- **沙箱**: 命令/文件系统/网络/浏览器(Process级轻量)
 - **设计文档**: `workerclaw-design.md`
-- **实现路径**: 4阶段（核心骨架→安全加固→任务管理→智能行为）
-- **当前进度**: 四阶段全部完成（2026-03-28）
-  - Phase 1: 核心骨架 MVP 完成
-    - 15个源文件 + 4个配置文件，编译零错误
-    - 模块: config, logger, events, types, ws-client, msg-parser, rate-limiter, source-verifier, security-gate, task-manager, llm-client, agent-engine, workerclaw主类, cli入口
-    - 集成测试 6/6 通过
-  - Phase 2: 安全加固完成
-    - 新增 6 个源文件 + 50 个安全测试（总计 56/56 通过）
-    - 内容扫描器: 提示注入30+模式、恶意命令20+模式、PII检测5种
-    - 权限分级: 四级权限(read_only/limited/standard/elevated)、自动分级
-    - 命令沙箱: 危险命令阻断、超时、环境变量过滤
-    - 文件沙箱: 路径验证、工作目录隔离、路径遍历防护
-    - 网络沙箱: URL验证、SSRF防护、域名黑白名单
-  - Phase 3: 任务管理完成
-    - 新增 7 个源文件 + 49 个任务管理测试（总计 99/99 通过）
-    - 任务状态机: 10种状态、合法转换表、历史追踪
-    - 任务评估器: 三维度评估（能力50%+容量20%+风险30%），accept/defer/reject 决策
-    - 并发控制器: 最大并发、按类型限流、等待队列+优先级调度
-    - 工具注册表: 8个内置工具、4级权限过滤
-    - 工具执行器: 沙箱内执行、权限检查、超时保护
-    - 平台API客户端: 结果上报、状态更新、心跳续约
-    - TaskManager完整重构，集成所有Phase 3模块
-  - Phase 4: 智能行为完成
-    - 新增 14 个源文件 + 45 个测试（总计 144/144 通过）
-    - 人格系统: 名称/语气/简介/专业领域/行为偏好/系统提示生成
-    - 上下文窗口: token估算、3种截断策略(oldest/middle/summarize)
-    - 会话管理: 多轮会话追踪、过期清理、上下文适配
-    - 技能系统: 注册表+执行器+3个内置技能(写作/搜索/代码)
-    - 智能活跃行为: 频率控制器+行为调度器(推文/浏览/评论/点赞)
-    - AgentEngine完整重构: LLM调用循环+工具调用+人格+会话+技能
-    - **WorkerClaw 框架四阶段全部完成！**
-  - Phase 5: CLI + 配置向导 + 技能包系统 (2026-03-28)
-    - 版本: 0.1.0 → 0.2.0
-    - CLI: citty命令框架 + @clack/prompts TUI + 4子命令(configure/start/status/skills)
-    - 配置向导: 5 section(platform/llm/personality/security/skills)
-    - PlatformApiClient扩展: registerAgent/getBotInfo/testConnection
-    - 技能包系统: SkillPackLoader + SkillPackRegistry (npm包+本地路径+目录扫描)
-    - 3个内置技能metadata升级v2.0 (任务类型/权限/工具声明)
-    - 测试: phase5.test.ts (需修复npm缓存权限后运行)
-    - 累计: 55+ 源文件, tsc零错误
-    - **WorkerClaw 框架五阶段全部完成！**
-  - **v0.3.1 WebSocket 协议修复** (2026-03-28)
-    - 对齐服务端 server.js 实际 WebSocket 协议
-    - 认证: `{ type: 'auth', payload: { botId, token } }` (非 URL query)
-    - 心跳: `{ type: 'heartbeat' }` (非 ping)
-    - 消息体: 服务端用 `payload`，客户端自动转换为 `data`
-    - 默认 wsUrl 修正为 `wss://www.miniabc.top/ws/openclaw`
-    - 服务端消息类型: `new_task`, `auth_success`, `pong` 等
-  - **v0.3.2-v0.3.6 一系列 CLI + 消息处理修复** (2026-03-28)
-    - v0.3.2: CLI 配置体验（Agent名称回显、API URL/模型名称改用 text()）
-    - v0.3.3: 配置流程优化（Agent名称不重复、Token完整显示、wsUrl默认值）
-    - v0.3.4: Agent名称重复修复（去 !existing?.name 条件）
-    - v0.3.5: 版本号从 package.json 动态读取；saveConfig 浅拷贝 bug 修复
-    - v0.3.6: **消息处理全面修复**（参照 OpenClaw 插件）
-      - SourceVerifier: 识别 ServerMessageType 所有实际类型；系统消息跳过 from 检查
-      - TaskManager: task/interaction/system/heartbeat 四路分发
-      - 新增交互消息处理: 私信自动回复(new_private_message)、评论自动回复(new_message)
-      - AgentEngine: 新增 generateReply() 轻量 LLM 调用
-      - PlatformApiClient: 新增 sendPrivateMessage/postComment/getTaskDetail API
-      - 配置文件路径: ~/.workerclaw/config.json
-  - **v0.3.7 LLM工具+金额阈值+API对齐** (2026-03-28)
-    - LLM客户端: 过滤 name 为空的工具定义，防 vLLM 400 错误
-    - 权限阈值: highValueThreshold 100→5000（50元才降级，2元不降级）
-    - PlatformApiClient 全面对齐服务端: takeTask(POST /api/task/:id/take)、submitWork(POST /api/task/:id/submit)
-      - reportResult() 内部调用 submitWork()；updateStatus() 改为 no-op
-    - TaskManager: acceptTask/deferTask 中 updateStatus → takeTask
-  - **经验基因系统设计** (2026-03-28)
-    - 文档: docs/experience-gene-design.md
-    - 参考 evomap GEP 协议，设计 WorkerClaw 专用的经验共享系统"虾片"
-    - 核心概念: Gene(经验基因) + Capsule(经验胶囊) + Evolution(踩坑记录)
-    - 4阶段: 本地经验池→自动封装→虾片Hub→智能进化
-    - 优先在智工坊服务端内建 Hub（零额外部署成本）
-    - 数据格式兼容 GEP-A2A v1.0（未来可跨生态共享）
-  - **v0.4.0 经验基因系统实现** (2026-03-28)
-    - 新增 src/experience/ 模块 (8个文件): types + local-store + signal-detector + search-engine + encapsulator + hub-client + manager + index
-    - 本地经验池: JSON 文件存储, 17 种信号检测模式, 关键词匹配搜索
-    - 经验封装: EvolutionProcess → Gene + Capsule + Event, SHA256 hash 计算 ID
-    - Hub 客户端: publishGene/searchGenes/submitReport (服务端 API 待实现)
-    - CLI: `workerclaw experience list|search|stats|events`
-    - 集成: WorkerClaw config/events/status, 3 个新事件 EXPERIENCE_SEARCHED/GAINED/APPLIED
-  - **服务端 Hub API 实现** (2026-03-28, 在智工坊 server.js 中)
-    - 3 张表: experience_genes/capsules/reports (GDI 四维评分, 使用/验证统计)
-    - 4 个端点: POST genes, GET genes/search, GET stats, POST report
-    - GDI 评分算法: quality(成功率)×0.4 + usage(验证次数)×0.2 + freshness(近期)×0.4
-    - 认证: X-Bot-Id header + botId 存在性检查
-  - **v0.4.1 AgentEngine + TaskManager 经验系统集成** (2026-03-28)
-    - AgentEngine: 预搜索经验→注入system prompt→失败时searchOnError→重试
-    - TaskManager: 进化追踪→经验辅助重试→成功后自动封装经验→EXPERIENCE_GAINED事件
-    - SearchEngine v2: 本地+Hub联合搜索, TF-IDF增强匹配, Hub基因本地缓存, 语义搜索
-    - 类型: TaskResult.experienceHint, HubSearchResponse.matchScore
-    - tsc 编译零错误
+- **npm包**: `workerclaw`, 当前版本 0.7.0
+- **配置文件**: ~/.workerclaw/config.json
 
 ### OpenClaw 平台信息
 - **版本**: 2026.3.24 (中文汉化版 `@qingchencloud/openclaw-zh`)
 - **安装路径**: `/usr/local/lib/node_modules/@qingchencloud/openclaw-zh/`
-- **CLI路径**: `/usr/local/bin/openclaw` (symlink → openclaw.mjs)
-- **配置目录**: `~/.openclaw/`
-- **插件SDK目录**: `dist/plugin-sdk/` (包含 core.js, index.js 及各种子路径模块)
-- **插件安装**: `openclaw plugins install <package>` (优先ClawHub, 回退npm)
+- **CLI**: `/usr/local/bin/openclaw`, 配置目录 `~/.openclaw/`
+- **Plugin SDK**: `openclaw/plugin-sdk/*` (子路径导入), 旧 `openclaw/extension-api` 已移除
 
-### OpenClaw 2026.3.22 重大架构变更
-- **Plugin SDK 变更**:
-  - 新公共SDK入口: `openclaw/plugin-sdk/*` (子路径导入)
-  - 旧入口 `openclaw/extension-api` 被移除，无兼容shim
-  - 内置插件必须用 `api.runtime` 注入方式做host-side操作
-  - 外部/社区插件仍可使用根 `openclaw/plugin-sdk` 导入
-- **安全增强**:
-  - Exec沙箱: 阻止JVM注入(MAVEN_OPTS等)、glibc漏洞利用(GLIBC_TUNABLES)、.NET依赖劫持(DOTNET_ADDITIONAL_DEPS)
-  - Voice-call webhook: 拒绝缺失签名的请求, pre-auth body降至64KB/5s, 限制并发
-  - Windows安全: 阻止远程file://媒体URL和UNC路径(防SMB凭据泄露)
-  - Nostr: 入站DM策略在解密前执行, 预加密速率/大小保护
-  - Gateway: ws://默认仅loopback, 需显式opt-in才能开放私有网络
-  - macOS LaunchAgent: 默认Umask=63(077), 文件权限更严格
-  - Media: 远程错误响应体限制流式cap和超时
-- **其他变更**:
-  - 插件安装优先ClawHub
-  - 新增 `openclaw skills search|install|update`
-  - 移除Chrome扩展relay路径
-  - 移除nano-banana-pro图像生成skill
-  - 移除CLAWDBOT_*/MOLTBOT_*旧环境变量名
-  - 新Matrix插件(官方matrix-js-sdk)
+## WorkerClaw 版本历史 (2026-03-28)
+
+| 版本 | 内容 |
+|------|------|
+| v0.2.0 | Phase 1-5 完成(核心骨架→安全→任务管理→智能行为→CLI) |
+| v0.3.1 | WebSocket协议修复(对齐服务端auth/heartbeat/payload) |
+| v0.3.2~3.3 | CLI配置体验优化 |
+| v0.3.4~3.5 | 名称重复修复+版本号动态读取+Token完整性 |
+| v0.3.6 | 消息处理全面修复(四路分发+私信/评论自动回复) |
+| v0.3.7 | LLM工具过滤+金额阈值+API对齐服务端(takeTask/submitWork) |
+| v0.4.0 | 经验基因系统(8个文件: 本地经验池+信号检测+搜索+封装+Hub) |
+| v0.4.1 | AgentEngine+TaskManager经验集成+语义搜索+TF-IDF |
+| v0.4.2 | takeTask await+消息去重+LLM拒绝检测+未知类型评分修正 |
+| v0.5.0 | 文件附件支持(uploadFile+submitWorkWithFiles) |
+| v0.6.0 | 拒收后续行动(LLM决策: resubmit/apologize/arbitrate/cancel) |
+| v0.7.0 | Playwright浏览器技能(navigate/extract/screenshot) |
+| v0.7.1 | 私信意图检测+任务引导规则+getActiveTaskIds |
+
+## 智工坊服务端 API 备忘
+- 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration
+- 文件: POST /api/cos/upload (base64)
+- 私信: POST /api/messages (senderId, receiverId, content)
+- 评论: POST /api/tweets/:id/comments
+- 经验Hub: POST /api/experience/genes, GET /api/experience/genes/search, GET /api/experience/stats, POST /api/experience/report
+- 认证: X-Bot-Id header + botId 存在性检查
+- WebSocket: wss://www.miniabc.top/ws/openclaw, 认证 `{ type: 'auth', payload: { botId, token } }`, 心跳 `{ type: 'heartbeat' }`

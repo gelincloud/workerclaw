@@ -554,14 +554,51 @@ export class TaskManager {
       const senderName = privateMsg.sender?.nickname || '用户';
       const content = privateMsg.content || '';
 
-      // 构建 LLM prompt
-      const systemPrompt = personality.customSystemPrompt ||
-        `你是${personality.name || '打工虾'}，语气${personality.tone || '友好热情'}。` +
-        (personality.bio ? `简介：${personality.bio}` : '') +
-        '\n\n你收到了一条站内私信，请生成简短的回复（1-3句话）。' +
-        '\n回复要求：自然、友好、简洁，符合你的人格设定。' +
-        '\n不要重复对方说过的话。如果对方在问问题，认真回答。' +
-        '\n只输出回复内容，不要加引号或前缀。';
+      // 0. 意图检测前置：操作关键词正则预过滤
+      const actionKeywordRegex = /撤销|取消|放弃|退单|不要了|不做了|进度|进展|怎么样了|做完了吗|查.*进度/;
+      const taskRequestRegex = /帮我|能帮我|帮忙|请帮我|能不能|会不会|可不可以|做.*视频|写.*文章|搜.*图|找.*图|画.*图|生成.*图|做个|写个|翻译|分析|处理|下载|查一下|搜一下/;
+      const hasActionKeyword = actionKeywordRegex.test(content);
+      const hasTaskRequestKeyword = taskRequestRegex.test(content);
+
+      // 1. 操作意图检测（撤销任务、查询进度）
+      if (content.length > 10 || (content.length > 3 && hasActionKeyword)) {
+        const intentResult = await Promise.race([
+          this.detectIntent(content, privateMsg.sender_id),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 10000)),
+        ]);
+
+        if (intentResult) {
+          this.logger.info(`🎯 意图已执行: ${intentResult.action}`);
+          const sendResult = await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            privateMsg.sender_id,
+            intentResult.message,
+          );
+          if (sendResult.success) {
+            this.logger.info(`💌 意图回复已发送 → ${senderName}: ${intentResult.message.substring(0, 50)}`);
+          }
+          return; // 意图已处理，不走普通回复
+        }
+      }
+
+      // 2. 构建 LLM prompt（含任务引导规则）
+      const botName = personality.name || '打工虾';
+      const basePrompt = personality.customSystemPrompt ||
+        `你是${botName}，智工坊平台上的一名打工虾，语气${personality.tone || '友好热情'}。` +
+        (personality.bio ? `\n简介：${personality.bio}` : '');
+
+      const taskGuidance = `
+【重要行为规则】
+- 你的能力只有在接到任务后才能使用，聊天时你无法直接执行任务。
+- 对方提出具体任务需求时（如"帮我做视频"、"帮我写个XX"、"帮我搜索XX"、"帮我找个太空图片"等），你要热情回应，说明自己能做，并引导对方给你发任务。
+  例如："这个我会做！你可以在聊天窗口点'新建任务'发给我，我接了就能开始干活了～"
+- 对方只是闲聊、问候、聊天，正常回应即可，不需要每次都提发任务。
+- 对方问"你能做什么"，简要介绍自己的能力，并说"发个任务给我试试就知道了"。
+- 绝对不要在聊天中直接帮对方完成任务，也不要说"我做不了"，而是说"给我发个任务吧"。
+
+回复要求：自然、友好、简洁（1-3句话），符合你的人格设定。不要重复对方说过的话。只输出回复内容，不要加引号或前缀。`;
+
+      const systemPrompt = basePrompt + taskGuidance;
 
       const result = await this.agentEngine.generateReply(
         systemPrompt,
@@ -584,6 +621,88 @@ export class TaskManager {
       }
     } catch (err) {
       this.logger.error('私信回复处理异常', err);
+    }
+  }
+
+  /**
+   * 检测私信中的操作意图（撤销任务、查询进度）
+   * 参照 OpenClaw 插件的 detectAndExecuteIntent 设计
+   *
+   * 返回: { action, message } 或 null
+   */
+  private async detectIntent(
+    content: string,
+    senderId: string,
+  ): Promise<{ action: string; message: string } | null> {
+    try {
+      const systemPrompt = `你是一个意图检测助手。分析用户的消息，判断是否包含以下意图之一：
+
+1. cancel_task - 撤销/放弃/取消已接取的任务
+   关键词：撤销、取消、放弃、不要了、不做了、退单
+
+2. check_progress - 查询任务进度
+   关键词：进度、进展、怎么样了、做了吗、完成了吗、查一下进度、任务状态、什么时候能好
+
+如果没有检测到明确意图，返回 null。
+
+返回格式（严格JSON，不要输出其他内容）：
+{"intent": "cancel_task" 或 "check_progress" 或 null, "confidence": 0到1}`;
+
+      const result = await this.agentEngine.generateReply(
+        systemPrompt,
+        `用户消息: "${content}"\n\n请检测意图：`,
+      );
+
+      if (!result) return null;
+
+      const jsonMatch = result.match(/\{[\s\S]*?\}/);
+      if (!jsonMatch) return null;
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (!parsed.intent || (typeof parsed.confidence === 'number' && parsed.confidence < 0.7)) {
+        return null;
+      }
+
+      // 执行意图
+      if (parsed.intent === 'cancel_task') {
+        // 查找进行中的任务
+        const status = this.getStatus();
+        if (status.runningTasks > 0) {
+          // 取最近一个任务尝试取消（简化版）
+          const taskIds = this.stateMachine.getActiveTaskIds();
+          if (taskIds.length > 0) {
+            const taskId = taskIds[0];
+            const cancelResult = await this.platformApi.cancelTake(taskId);
+            if (cancelResult.success) {
+              return { action: 'cancel_task', message: '好的，我已经撤销了这个任务。' };
+            }
+            return { action: 'cancel_task', message: `撤销失败: ${cancelResult.error || '未知错误'}` };
+          }
+        }
+        return { action: 'cancel_task', message: '我目前没有进行中的任务可以撤销。' };
+      }
+
+      if (parsed.intent === 'check_progress') {
+        const status = this.getStatus();
+        if (status.runningTasks > 0) {
+          return {
+            action: 'check_progress',
+            message: `📋 任务进度查询\n\n目前有 ${status.runningTasks} 个任务正在执行中，请稍等，完成后会自动通知你～`,
+          };
+        }
+        if (status.queuedTasks > 0) {
+          return {
+            action: 'check_progress',
+            message: `📋 任务进度查询\n\n有 ${status.queuedTasks} 个任务在排队等待执行，马上就轮到了～`,
+          };
+        }
+        return { action: 'check_progress', message: '目前没有正在执行中的任务哦，您可以随时发任务给我！' };
+      }
+
+      return null;
+    } catch (err) {
+      this.logger.error('意图检测异常', { error: (err as Error).message });
+      return null;
     }
   }
 

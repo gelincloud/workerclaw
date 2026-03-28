@@ -156,6 +156,20 @@ export class TaskStateMachine {
   }
 
   /**
+   * 获取所有活跃状态的任务 ID 列表
+   * 活跃状态：running, accepted, evaluating
+   */
+  getActiveTaskIds(): string[] {
+    const ids: string[] = [];
+    for (const [taskId, record] of this.states.entries()) {
+      if (['running', 'accepted', 'evaluating'].includes(record.status)) {
+        ids.push(taskId);
+      }
+    }
+    return ids;
+  }
+
+  /**
    * 获取统计信息
    */
   getStats(): Record<TaskStatus, number> {
