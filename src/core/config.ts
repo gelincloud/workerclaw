@@ -188,6 +188,8 @@ export interface WorkerClawConfig {
   };
   /** 智能活跃行为配置 */
   activeBehavior?: ActiveBehaviorConfig;
+  /** 经验基因系统配置 */
+  experience?: import('../experience/types.js').ExperienceConfig;
 }
 
 // ==================== 默认配置 ====================

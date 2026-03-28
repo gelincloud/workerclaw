@@ -21,6 +21,7 @@ import type {
 } from '../types/task.js';
 import type { PlatformConfig, LLMConfig, SecurityConfig, TaskConfig } from '../core/config.js';
 import type { PermissionLevel } from '../types/agent.js';
+import type { ExperienceManager } from '../experience/index.js';
 
 export interface TaskManagerConfig {
   platform: PlatformConfig;
@@ -56,6 +57,9 @@ export class TaskManager {
   private concurrency: ConcurrencyController;
   private platformApi: PlatformApiClient;
   private toolExecutor: ToolExecutor;
+
+  /** 经验管理器（由外部注入） */
+  private experienceManager: ExperienceManager | null = null;
 
   // 超时管理
   private taskTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -496,6 +500,9 @@ export class TaskManager {
    */
   private async executeTask(task: Task, permLevel: PermissionLevel): Promise<void> {
     try {
+      // 开始进化追踪
+      this.experienceManager?.startEvolution(task.taskId, task.taskType);
+
       const context: TaskExecutionContext = {
         task,
         permissionLevel: permLevel,
@@ -504,7 +511,65 @@ export class TaskManager {
         receivedAt: Date.now(),
       };
 
-      const result = await this.agentEngine.executeTask(task, context);
+      let result = await this.agentEngine.executeTask(task, context);
+
+      // 如果任务失败且有经验提示，用经验辅助重试一次
+      if (result.status === 'failed' && result.experienceHint && this.experienceManager) {
+        this.logger.info(`🧬 经验辅助重试 [${task.taskId}]`, {
+          geneId: result.experienceHint.gene.gene_id.slice(0, 12),
+          matchScore: result.experienceHint.matchScore,
+        });
+
+        // 记录第一次失败的尝试
+        this.experienceManager.recordMutation(
+          'default approach',
+          'failed',
+          result.error,
+        );
+
+        // 重新构建执行上下文（会自动通过 buildSystemPrompt 注入经验策略）
+        // 需要先销毁上次会话
+        this.agentEngine.getSessionManager().completeSession(task.taskId);
+
+        result = await this.agentEngine.executeTask(task, context);
+
+        if (result.status === 'completed') {
+          this.experienceManager.recordMutation(
+            'experience-guided retry',
+            'success',
+          );
+          this.logger.info(`✅ 经验辅助重试成功 [${task.taskId}]`);
+        } else {
+          this.experienceManager.recordMutation(
+            'experience-guided retry',
+            'failed',
+            result.error,
+          );
+        }
+      }
+
+      // 任务完成后尝试封装经验
+      if (result.status === 'completed' && this.experienceManager) {
+        this.experienceManager.completeEvolution(
+          'success',
+          `任务完成: ${task.title}`,
+          [{ step: 1, action: '执行任务', explanation: task.description }],
+          '', // 无错误信息
+          { filesAffected: 0, linesChanged: 0 },
+        ).then(evolutionResult => {
+          if (evolutionResult) {
+            this.eventBus.emit(WorkerClawEvent.EXPERIENCE_GAINED, {
+              geneId: evolutionResult.gene.gene_id,
+              category: evolutionResult.gene.category,
+              summary: evolutionResult.gene.summary,
+            });
+            this.logger.info(`🧬 经验已封装 [${task.taskId}]`, {
+              geneId: evolutionResult.gene.gene_id.slice(0, 12),
+              category: evolutionResult.gene.category,
+            });
+          }
+        }).catch(() => {});
+      }
 
       // 上报结果到平台
       await this.reportResult(task, result);
@@ -657,6 +722,15 @@ export class TaskManager {
    */
   getAgentEngine(): AgentEngine {
     return this.agentEngine;
+  }
+
+  /**
+   * 设置经验管理器
+   */
+  setExperienceManager(em: ExperienceManager): void {
+    this.experienceManager = em;
+    // 同时传递给 AgentEngine
+    this.agentEngine.setExperienceManager(em);
   }
 
   /**

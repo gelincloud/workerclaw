@@ -60,6 +60,11 @@ export enum WorkerClawEvent {
   LLM_REQUEST = 'llm:request',
   LLM_RESPONSE = 'llm:response',
   LLM_ERROR = 'llm:error',
+
+  // 经验
+  EXPERIENCE_SEARCHED = 'experience:searched',
+  EXPERIENCE_GAINED = 'experience:gained',
+  EXPERIENCE_APPLIED = 'experience:applied',
 }
 
 // ==================== 事件数据 ====================
@@ -107,6 +112,10 @@ export interface EventMap {
   [WorkerClawEvent.LLM_REQUEST]: { taskId: string; model: string };
   [WorkerClawEvent.LLM_RESPONSE]: { taskId: string; tokens?: { prompt: number; completion: number } };
   [WorkerClawEvent.LLM_ERROR]: { taskId: string; error: Error };
+
+  [WorkerClawEvent.EXPERIENCE_SEARCHED]: { taskId?: string; signals: string[]; found: boolean };
+  [WorkerClawEvent.EXPERIENCE_GAINED]: { geneId: string; category: string; summary: string };
+  [WorkerClawEvent.EXPERIENCE_APPLIED]: { geneId: string; matchScore: number; source: string };
 }
 
 // ==================== 事件处理器 ====================

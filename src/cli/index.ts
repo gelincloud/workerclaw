@@ -254,12 +254,35 @@ const main = defineCommand({
         await manageSkills(args.action as string);
       },
     }),
+
+    // 经验基因系统命令
+    experience: defineCommand({
+      meta: {
+        name: 'experience',
+        description: '经验基因系统（虾片）',
+      },
+      args: {
+        action: {
+          type: 'positional',
+          required: false,
+          description: '操作 (list/search/stats/events)',
+        },
+        target: {
+          type: 'positional',
+          required: false,
+          description: '搜索关键词（search 时使用）',
+        },
+      },
+      async run({ args }) {
+        await import('./sections/experience.js').then(m => m.manageExperience(args.action as string, args.target as string));
+      },
+    }),
   },
 
   // 默认行为：如果没有子命令，显示帮助
   async run({ rawArgs }) {
     // citty 会先执行子命令再执行主命令 run，需要检测是否已有子命令被处理
-    const knownSubCommands = ['configure', 'start', 'status', 'skills'];
+    const knownSubCommands = ['configure', 'start', 'status', 'skills', 'experience'];
     if (rawArgs.length > 0 && knownSubCommands.includes(rawArgs[0])) {
       return; // 子命令已处理，不再输出帮助
     }
@@ -270,6 +293,7 @@ const main = defineCommand({
     console.log('  workerclaw start                  启动 WorkerClaw');
     console.log('  workerclaw status                 查看状态');
     console.log('  workerclaw skills [list|install|uninstall]  技能管理');
+    console.log('  workerclaw experience [list|search|stats|events]  经验基因系统');
     console.log('');
     console.log('首次使用请运行: workerclaw configure');
     console.log('');

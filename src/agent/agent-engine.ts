@@ -31,6 +31,8 @@ import type {
   LLMMessage, LLMResponse, ToolCall, PermissionLevel,
 } from '../types/agent.js';
 import type { PersonalityConfig } from './personality.js';
+import type { ExperienceManager } from '../experience/index.js';
+import type { ExperienceSearchResult } from '../experience/types.js';
 
 export interface AgentEngineConfig {
   llm: LLMConfig;
@@ -58,7 +60,13 @@ export class AgentEngine {
   private skillRunner: SkillRunner;
   private skillRegistry: SkillRegistry;
 
-  constructor(config: AgentEngineConfig, eventBus: EventBus) {
+  /** 经验管理器（可选，由外部注入） */
+  private experienceManager: ExperienceManager | null = null;
+
+  /** 当前任务的经验搜索结果（executeTask 中预搜索） */
+  private currentTaskExperience: ExperienceSearchResult | null = null;
+
+  constructor(config: AgentEngineConfig, eventBus: EventBus, experienceManager?: ExperienceManager) {
     this.config = config;
     this.eventBus = eventBus;
 
@@ -91,6 +99,11 @@ export class AgentEngine {
     );
 
     this.logger = createLogger('AgentEngine');
+
+    // 经验系统
+    if (experienceManager) {
+      this.experienceManager = experienceManager;
+    }
   }
 
   /**
@@ -104,6 +117,9 @@ export class AgentEngine {
     });
 
     this.eventBus.emit(WorkerClawEvent.TASK_STARTED, { taskId: task.taskId });
+
+    // 预搜索任务相关经验（在构建 prompt 前）
+    await this.preSearchExperience(task);
 
     // 创建会话
     const systemPrompt = this.buildSystemPrompt(task, context);
@@ -161,16 +177,41 @@ export class AgentEngine {
     } catch (err) {
       const durationMs = Date.now() - startTime;
       const error = err as Error;
+      const errorMessage = error.message;
 
-      this.logger.error(`任务执行失败 [${task.taskId}]`, { error: error.message, durationMs });
+      this.logger.error(`任务执行失败 [${task.taskId}]`, { error: errorMessage, durationMs });
       this.eventBus.emit(WorkerClawEvent.LLM_ERROR, { taskId: task.taskId, error });
       this.eventBus.emit(WorkerClawEvent.TASK_FAILED, { taskId: task.taskId, error });
+
+      // 经验搜索：错误时自动查找相关经验
+      let experienceHint: ExperienceSearchResult | undefined;
+      if (this.experienceManager) {
+        try {
+          const hint = await this.experienceManager.searchOnError(errorMessage);
+          if (hint) {
+            experienceHint = hint;
+            this.eventBus.emit(WorkerClawEvent.EXPERIENCE_SEARCHED, {
+              taskId: task.taskId,
+              signals: experienceHint.gene.signals,
+              found: true,
+            });
+            this.logger.info(`🧬 经验搜索命中 [${task.taskId}]`, {
+              geneId: experienceHint.gene.gene_id.slice(0, 12),
+              matchScore: experienceHint.matchScore,
+              summary: experienceHint.gene.summary,
+            });
+          }
+        } catch {
+          // 搜索失败不影响主流程
+        }
+      }
 
       return {
         taskId: task.taskId,
         status: 'failed',
-        error: error.message,
+        error: errorMessage,
         durationMs,
+        experienceHint, // 附带经验提示供上层使用
       };
     } finally {
       // 标记会话完成
@@ -375,7 +416,7 @@ export class AgentEngine {
   }
 
   /**
-   * 构建系统提示（人格 + 技能 + 权限）
+   * 构建系统提示（人格 + 技能 + 权限 + 经验策略）
    */
   private buildSystemPrompt(task: Task, context: TaskExecutionContext): string {
     const availableTools = this.toolExecutor.getRegistry().getToolNames();
@@ -389,12 +430,93 @@ export class AgentEngine {
       currentDate: new Date().toISOString().slice(0, 10),
     });
 
+    let result = prompt;
+
     // 附加技能提示
     if (skillAddons.length > 0) {
-      return prompt + '\n\n' + skillAddons.join('\n\n');
+      result += '\n\n' + skillAddons.join('\n\n');
     }
 
-    return prompt;
+    // 附加经验策略（从本地+Hub搜索匹配经验）
+    if (this.experienceManager) {
+      const expAddon = this.buildExperienceAddon(task);
+      if (expAddon) {
+        result += '\n\n' + expAddon;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * 根据任务信息搜索经验，构建经验策略提示
+   * 使用 currentTaskExperience 缓存（由 executeTask 预搜索填充）
+   */
+  private buildExperienceAddon(task: Task): string | null {
+    // 优先使用预搜索结果
+    if (this.currentTaskExperience) {
+      return this.formatExperienceHint(this.currentTaskExperience);
+    }
+    return null;
+  }
+
+  /**
+   * 格式化经验搜索结果为 LLM 提示文本
+   */
+  private formatExperienceHint(result: ExperienceSearchResult): string {
+    const strategyText = result.gene.strategy
+      .map((s: import('../experience/types.js').StrategyStep) =>
+        `${s.step}. ${s.action}${s.explanation ? ` — ${s.explanation}` : ''}`
+      )
+      .join('\n');
+
+    return [
+      `## 🧬 相关经验参考 (匹配度: ${Math.round(result.matchScore * 100)}%)`,
+      `> ${result.gene.summary}`,
+      result.gene.description ? `> ${result.gene.description}` : '',
+      '',
+      '推荐策略:',
+      strategyText,
+      result.capsule?.outcome?.status === 'success'
+        ? '\n✅ 此策略已验证有效，优先参考。'
+        : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  /**
+   * 预搜索任务相关经验（异步，在 executeTask 中调用）
+   */
+  private async preSearchExperience(task: Task): Promise<void> {
+    this.currentTaskExperience = null;
+
+    if (!this.experienceManager) return;
+
+    try {
+      const keywords = [
+        task.taskType,
+        task.title,
+        ...task.description.split(/[\s,，。.！!？?；;]+/).filter((w: string) => w.length > 2).slice(0, 5),
+      ];
+
+      const results = await this.experienceManager.search(keywords);
+      if (results.length > 0 && results[0].matchScore >= 0.3) {
+        this.currentTaskExperience = results[0];
+
+        this.eventBus.emit(WorkerClawEvent.EXPERIENCE_APPLIED, {
+          geneId: results[0].gene.gene_id,
+          matchScore: results[0].matchScore,
+          source: results[0].source,
+        });
+
+        this.logger.info(`🧬 预搜索经验命中 [${task.taskId}]`, {
+          geneId: results[0].gene.gene_id.slice(0, 12),
+          matchScore: results[0].matchScore,
+          source: results[0].source,
+        });
+      }
+    } catch {
+      // 搜索失败不影响任务执行
+    }
   }
 
   /**
@@ -479,6 +601,20 @@ export class AgentEngine {
    */
   getSkillStats() {
     return this.skillRegistry.getStats();
+  }
+
+  /**
+   * 设置经验管理器
+   */
+  setExperienceManager(em: ExperienceManager): void {
+    this.experienceManager = em;
+  }
+
+  /**
+   * 获取经验管理器
+   */
+  getExperienceManager(): ExperienceManager | null {
+    return this.experienceManager;
   }
 
   /**

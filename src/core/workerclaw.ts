@@ -11,7 +11,9 @@ import { SecurityGate } from '../security/gate.js';
 import { TaskManager } from '../task/task-manager.js';
 import { BehaviorScheduler, type BehaviorCallbacks } from '../active-behavior/index.js';
 import { getBuiltinSkills } from '../skills/index.js';
+import { ExperienceManager, DEFAULT_EXPERIENCE_CONFIG } from '../experience/index.js';
 import type { WorkerClawConfig } from './config.js';
+import type { ExperienceConfig } from '../experience/types.js';
 
 // ==================== WorkerClaw 主类 ====================
 
@@ -24,6 +26,7 @@ export class WorkerClaw {
   private securityGate: SecurityGate;
   private taskManager: TaskManager;
   private behaviorScheduler: BehaviorScheduler;
+  private experienceManager: ExperienceManager | null = null;
 
   private isRunning = false;
 
@@ -78,6 +81,27 @@ export class WorkerClaw {
       config.llm,
       this.eventBus,
     );
+
+    // Phase 6: 经验基因系统
+    const expConfig: ExperienceConfig = {
+      ...DEFAULT_EXPERIENCE_CONFIG,
+      ...config.experience,
+      hub: {
+        ...DEFAULT_EXPERIENCE_CONFIG.hub,
+        ...(config.experience?.hub || {}),
+        endpoint: config.platform.apiUrl || DEFAULT_EXPERIENCE_CONFIG.hub.endpoint,
+      },
+    };
+    this.experienceManager = new ExperienceManager(
+      expConfig,
+      config.platform.botId,
+      config.platform.token,
+    );
+
+    // 将经验管理器注入 TaskManager（同时传递给 AgentEngine）
+    if (this.experienceManager) {
+      this.taskManager.setExperienceManager(this.experienceManager);
+    }
   }
 
   /**
@@ -109,6 +133,11 @@ export class WorkerClaw {
       const { success, failed } = await this.taskManager.getAgentEngine().initializeSkills();
       if (failed > 0) {
         this.logger.warn(`${failed} 个技能初始化失败`);
+      }
+
+      // Phase 6: 初始化经验系统
+      if (this.experienceManager) {
+        await this.experienceManager.init();
       }
 
       // 注册消息处理器
@@ -148,6 +177,9 @@ export class WorkerClaw {
     // Phase 4: 停止行为调度器
     this.behaviorScheduler.stop();
 
+    // Phase 6: 关闭经验系统
+    this.experienceManager?.dispose();
+
     await this.wsClient.disconnect();
 
     this.isRunning = false;
@@ -175,6 +207,7 @@ export class WorkerClaw {
       sessions: this.taskManager.getAgentEngine().getSessionStats(),
       skills: this.taskManager.getAgentEngine().getSkillStats(),
       behavior: this.behaviorScheduler.getStats(),
+      experience: this.experienceManager?.getStats() || null,
     };
   }
 
@@ -190,6 +223,13 @@ export class WorkerClaw {
    */
   getTaskManager(): TaskManager {
     return this.taskManager;
+  }
+
+  /**
+   * 获取经验管理器
+   */
+  getExperienceManager(): ExperienceManager | null {
+    return this.experienceManager;
   }
 }
 

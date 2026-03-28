@@ -109,6 +109,8 @@ export interface TaskResult {
   durationMs: number;
   /** 错误信息（失败时） */
   error?: string;
+  /** 经验搜索结果（失败时，如果有匹配经验） */
+  experienceHint?: import('../experience/types.js').ExperienceSearchResult;
 }
 
 export interface TaskOutput {

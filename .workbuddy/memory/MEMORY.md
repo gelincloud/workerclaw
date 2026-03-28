@@ -19,8 +19,9 @@
   - 用户等级系统: 星/月/太阳/皇冠(最高256级), 基于活跃天数
   - 实时通信: WebSocket推送新任务/新消息, 心跳保活
 - **页面**: 登录页、个人信息、信息流、任务广场、任务详情、我的发单/接单、消息中心、余额管理
-- **部署**: 服务器上通过PM2运行, 支持HTTPS
+- **部署**: 服务器 82.156.86.246, 路径 /root/bot-social, PM2 进程名 bot-social, HTTPS
 - **数据库**: SQLite, 存储在 `./data/bots.db`
+- **SSH**: root@82.156.86.246, 密钥 ~/.ssh/id_ed25519 (已授权)
 - **表**: bots, tweets, tweet_likes, tweet_comments, tasks, messages, follows, transactions
 
 ### 项目2: MiniABC OpenClaw 插件 (`/Users/admin/WorkBuddy/openclaw-miniabc-channel`)
@@ -133,8 +134,33 @@
     - LLM客户端: 过滤 name 为空的工具定义，防 vLLM 400 错误
     - 权限阈值: highValueThreshold 100→5000（50元才降级，2元不降级）
     - PlatformApiClient 全面对齐服务端: takeTask(POST /api/task/:id/take)、submitWork(POST /api/task/:id/submit)
-    - reportResult() 内部调用 submitWork()；updateStatus() 改为 no-op
+      - reportResult() 内部调用 submitWork()；updateStatus() 改为 no-op
     - TaskManager: acceptTask/deferTask 中 updateStatus → takeTask
+  - **经验基因系统设计** (2026-03-28)
+    - 文档: docs/experience-gene-design.md
+    - 参考 evomap GEP 协议，设计 WorkerClaw 专用的经验共享系统"虾片"
+    - 核心概念: Gene(经验基因) + Capsule(经验胶囊) + Evolution(踩坑记录)
+    - 4阶段: 本地经验池→自动封装→虾片Hub→智能进化
+    - 优先在智工坊服务端内建 Hub（零额外部署成本）
+    - 数据格式兼容 GEP-A2A v1.0（未来可跨生态共享）
+  - **v0.4.0 经验基因系统实现** (2026-03-28)
+    - 新增 src/experience/ 模块 (8个文件): types + local-store + signal-detector + search-engine + encapsulator + hub-client + manager + index
+    - 本地经验池: JSON 文件存储, 17 种信号检测模式, 关键词匹配搜索
+    - 经验封装: EvolutionProcess → Gene + Capsule + Event, SHA256 hash 计算 ID
+    - Hub 客户端: publishGene/searchGenes/submitReport (服务端 API 待实现)
+    - CLI: `workerclaw experience list|search|stats|events`
+    - 集成: WorkerClaw config/events/status, 3 个新事件 EXPERIENCE_SEARCHED/GAINED/APPLIED
+  - **服务端 Hub API 实现** (2026-03-28, 在智工坊 server.js 中)
+    - 3 张表: experience_genes/capsules/reports (GDI 四维评分, 使用/验证统计)
+    - 4 个端点: POST genes, GET genes/search, GET stats, POST report
+    - GDI 评分算法: quality(成功率)×0.4 + usage(验证次数)×0.2 + freshness(近期)×0.4
+    - 认证: X-Bot-Id header + botId 存在性检查
+  - **v0.4.1 AgentEngine + TaskManager 经验系统集成** (2026-03-28)
+    - AgentEngine: 预搜索经验→注入system prompt→失败时searchOnError→重试
+    - TaskManager: 进化追踪→经验辅助重试→成功后自动封装经验→EXPERIENCE_GAINED事件
+    - SearchEngine v2: 本地+Hub联合搜索, TF-IDF增强匹配, Hub基因本地缓存, 语义搜索
+    - 类型: TaskResult.experienceHint, HubSearchResponse.matchScore
+    - tsc 编译零错误
 
 ### OpenClaw 平台信息
 - **版本**: 2026.3.24 (中文汉化版 `@qingchencloud/openclaw-zh`)

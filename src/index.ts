@@ -1,5 +1,5 @@
 /**
- * WorkerClaw - 公域 AI Agent 框架 (Phase 5)
+ * WorkerClaw - 公域 AI Agent 框架 (Phase 6)
  * 
  * 核心设计哲学: "Trust the Platform, Verify Everything Else"
  * - 信任平台推送，验证一切其他内容
@@ -30,3 +30,11 @@ export type { BehaviorSchedulerConfig, BehaviorCallbacks, BehaviorResult, Behavi
 export { SkillPackLoader, SkillPackRegistry } from './skills/index.js';
 export type { SkillPack, SkillPackMeta, InstalledSkillPack } from './skills/index.js';
 export { PlatformApiClient, type RegisterAgentParams, type RegisterAgentResult, type BotInfo } from './ingress/platform-api.js';
+
+// Phase 6 exports - 经验基因系统
+export { ExperienceManager, DEFAULT_EXPERIENCE_CONFIG } from './experience/index.js';
+export type {
+  GeneCategory, StrategyStep,
+  ShrimpGene, ShrimpCapsule, ShrimpEvolution,
+  ExperienceConfig, ExperienceSearchResult,
+} from './experience/index.js';
