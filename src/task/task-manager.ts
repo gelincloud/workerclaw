@@ -783,12 +783,20 @@ export class TaskManager {
         break;
       case 'defer':
         await this.deferTask(task, evaluation);
+        // v2: 延迟时发私信告知发单人
+        this.notifyTaskDefer(task, evaluation).catch(err => {
+          this.logger.debug('发送延迟通知私信失败', { error: (err as Error).message });
+        });
         break;
       case 'reject':
         this.stateMachine.transition(task.taskId, 'rejected', evaluation.reason);
         this.eventBus.emit(WorkerClawEvent.TASK_REJECTED, {
           taskId: task.taskId,
           reason: evaluation.reason || '评估未通过',
+        });
+        // v2: 拒绝时发私信告知发单人原因
+        this.notifyTaskReject(task, evaluation).catch(err => {
+          this.logger.debug('发送拒绝通知私信失败', { error: (err as Error).message });
         });
         break;
     }
@@ -800,10 +808,15 @@ export class TaskManager {
   private evaluateTask(task: Task): TaskEvaluation {
     const concurrencyStats = this.concurrency.getStats();
 
+    // v2: 传入已注册技能列表，让评估器感知已注册技能
+    const agentEngine = this.getAgentEngine();
+    const registeredSkills = agentEngine.getSkillRegistry().getSkillNames();
+
     const context: EvaluationContext = {
       runningCount: concurrencyStats.running,
       maxConcurrent: this.config.task.concurrency.maxConcurrent,
       skills: this.toolExecutor.getRegistry().getToolNames(),
+      registeredSkills, // v2: 新增
       completedCountByType: {}, // Phase 4 追踪历史
       threshold: this.config.task.evaluation.acceptThreshold,
     };
@@ -1095,6 +1108,72 @@ export class TaskManager {
    */
   private determinePermissionLevel(task: Task): PermissionLevel {
     return this.securityGate.gradePermission(task);
+  }
+
+  /**
+   * v2: 拒绝任务时发私信告知发单人原因
+   * 
+   * 不再静默丢弃任务，而是给发单人一个解释，提高沟通体验
+   */
+  private async notifyTaskReject(task: Task, evaluation: TaskEvaluation): Promise<void> {
+    try {
+      const posterId = task.posterId || task.raw?.publisher_id;
+      if (!posterId) {
+        this.logger.debug('无法发送拒绝通知：缺少发单人 ID');
+        return;
+      }
+
+      const botName = this.config.personality.name || '打工虾';
+      const explanation = this.evaluator.getEvaluationExplanation(task, evaluation);
+
+      const message = `抱歉，您的任务暂时无法接取 😔\n\n` +
+        `📋 任务：${task.title}\n` +
+        `💰 报酬：${((task.reward || 0) / 100).toFixed(2)} 元\n\n` +
+        `📊 评估详情：\n${explanation}\n\n` +
+        `您可以修改任务描述后重新发布，或稍后再试。\n` +
+        `如有疑问，随时私信我～`;
+
+      await this.platformApi.sendPrivateMessage(
+        this.config.platform.botId,
+        posterId,
+        message,
+      );
+
+      this.logger.info(`📩 已发送拒绝通知私信给发单人 [${task.taskId}]`);
+    } catch (err) {
+      this.logger.debug('发送拒绝通知私信失败', { error: (err as Error).message });
+    }
+  }
+
+  /**
+   * v2: 延迟任务时发私信告知发单人正在排队
+   */
+  private async notifyTaskDefer(task: Task, evaluation: TaskEvaluation): Promise<void> {
+    try {
+      const posterId = task.posterId || task.raw?.publisher_id;
+      if (!posterId) return;
+
+      const botName = this.config.personality.name || '打工虾';
+      const concurrencyStats = this.concurrency.getStats();
+
+      const message = `您的任务已加入排队队列 ⏳\n\n` +
+        `📋 任务：${task.title}\n` +
+        `💰 报酬：${((task.reward || 0) / 100).toFixed(2)} 元\n` +
+        `📊 评分：${evaluation.score}/100\n\n` +
+        `当前状态：正在处理 ${concurrencyStats.running} 个任务，有空位后会自动开始执行您的任务。\n` +
+        `预计不需要太久，请耐心等待～\n\n` +
+        `如需查看进度，随时私信我"进展怎么样了"。`;
+
+      await this.platformApi.sendPrivateMessage(
+        this.config.platform.botId,
+        posterId,
+        message,
+      );
+
+      this.logger.info(`📩 已发送排队通知私信给发单人 [${task.taskId}]`);
+    } catch (err) {
+      this.logger.debug('发送排队通知私信失败', { error: (err as Error).message });
+    }
   }
 
   /**

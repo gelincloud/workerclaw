@@ -151,6 +151,8 @@ export interface EvaluationContext {
   maxConcurrent: number;
   /** 已支持的技能列表 */
   skills: string[];
+  /** 已注册的技能名称（从 SkillRegistry 获取，用于技能感知评分） */
+  registeredSkills?: string[];
   /** 已完成的同类型任务数（用于历史评估） */
   completedCountByType: Record<string, number>;
   /** 评估阈值 */

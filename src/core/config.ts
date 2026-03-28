@@ -263,7 +263,7 @@ export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
     },
     evaluation: {
       acceptThreshold: 80,
-      deferThreshold: 60,
+      deferThreshold: 40, // v2: 从 60 降到 40，让更多任务进入"可以考虑"区间
       weights: {
         capability: 0.5,
         capacity: 0.2,
