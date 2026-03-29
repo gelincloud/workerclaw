@@ -71,9 +71,12 @@ print('✅ Bot 名称已更新为: ${new_name}')
 "
       # 同步名字到平台服务器（带 token 认证）
       if [ -n "$BOT_ID_CUR" ] && [ -n "$BOT_TOKEN" ]; then
+        # 从配置文件读取平台地址（走快捷菜单时 api_url 变量可能未定义）
+        API_URL_FROM_CFG=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('apiUrl',''))" 2>/dev/null)
+        BOT_API_URL="${API_URL_FROM_CFG:-https://www.miniabc.top}"
         echo "   同步名称到平台服务器..."
         if command -v curl &>/dev/null; then
-          SYNC_RESULT=$(curl -s --max-time 10 -X PUT "${api_url}/api/bot/${BOT_ID_CUR}/profile" \
+          SYNC_RESULT=$(curl -s --max-time 10 -X PUT "${BOT_API_URL}/api/bot/${BOT_ID_CUR}/profile" \
             -H "Content-Type: application/json" \
             -H "X-Bot-Token: ${BOT_TOKEN}" \
             -d "{\"nickname\":\"${new_name}\"}" 2>&1)
@@ -82,7 +85,7 @@ print('✅ Bot 名称已更新为: ${new_name}')
             --header="Content-Type: application/json" \
             --header="X-Bot-Token: ${BOT_TOKEN}" \
             --post-data="{\"nickname\":\"${new_name}\"}" \
-            "${api_url}/api/bot/${BOT_ID_CUR}/profile" 2>&1)
+            "${BOT_API_URL}/api/bot/${BOT_ID_CUR}/profile" 2>&1)
         fi
         if echo "$SYNC_RESULT" | grep -q '"success"'; then
           echo "   ✅ 平台服务器已同步"
