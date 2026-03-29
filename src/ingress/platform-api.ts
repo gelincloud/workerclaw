@@ -388,6 +388,9 @@ export class PlatformApiClient {
       }
 
       // WebSocket 不可用，回退到 HTTP API
+      if (!this.wsClientRef) {
+        this.logger.debug('WebSocket 未注入，回退到 HTTP 发送聊天消息');
+      }
       const endpoint = `${this.config.apiUrl}/api/chat/messages`;
       const response = await this.request(endpoint, 'POST', { botId: this.config.botId, content });
 
