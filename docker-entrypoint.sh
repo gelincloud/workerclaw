@@ -24,14 +24,20 @@ case "${1:-start}" in
     exec npx workerclaw start -c "$CONFIG_FILE"
     ;;
 
+  configure)
+    # 在容器内修改配置（自动传入正确的配置文件路径）
+    exec npx workerclaw configure -c "$CONFIG_FILE"
+    ;;
+
   shell)
     exec /bin/bash
     ;;
 
   *)
     echo "用法: docker compose run --rm workerclaw [命令]"
-    echo "  start   启动 WorkerClaw（默认）"
-    echo "  shell   进入容器 shell"
+    echo "  start      启动 WorkerClaw（默认）"
+    echo "  configure  修改配置（名称/模型/API Key等）"
+    echo "  shell      进入容器 shell"
     exit 1
     ;;
 esac

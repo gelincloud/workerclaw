@@ -37,14 +37,112 @@ if [ -f "$CONFIG_FILE" ]; then
   echo "📄 已有配置文件: $CONFIG_FILE"
   BOT_NAME=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('personality',{}).get('name','未知'))" 2>/dev/null)
   BOT_ID=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('botId','未注册'))" 2>/dev/null)
+  LLM_MODEL_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('llm',{}).get('model','未知'))" 2>/dev/null)
   echo "   Bot 名称: $BOT_NAME"
   echo "   Bot ID: $BOT_ID"
+  echo "   模型: $LLM_MODEL_CUR"
   echo ""
-  read -p "是否重新配置？(y/N): " confirm
-  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-    echo "保持现有配置，跳过。"
-    exit 0
-  fi
+  echo "   1) 完全重新配置（包括重新注册 Bot）"
+  echo "   2) 仅修改 Bot 名称"
+  echo "   3) 仅修改大模型配置"
+  echo "   4) 仅修改 API Key"
+  echo "   5) 保持现有配置，跳过"
+  echo ""
+  read -p "   请选择 [5]: " config_choice
+  config_choice="${config_choice:-5}"
+
+  case "$config_choice" in
+    2)
+      read -p "   新的 Bot 名称 [$BOT_NAME]: " new_name
+      new_name="${new_name:-$BOT_NAME}"
+      python3 -c "
+import json
+cfg_path = '${CONFIG_FILE}'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c['personality']['name'] = '${new_name}'
+c['platform']['agentName'] = '${new_name}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ Bot 名称已更新为: ${new_name}')
+"
+      echo ""
+      echo "   重启容器生效: docker compose restart"
+      exit 0
+      ;;
+    3)
+      echo "   当前模型: $LLM_MODEL_CUR"
+      read -p "   新的 API Base URL: " new_url
+      read -p "   新的模型名称 [$LLM_MODEL_CUR]: " new_model
+      new_model="${new_model:-$LLM_MODEL_CUR}"
+      python3 -c "
+import json
+cfg_path = '${CONFIG_FILE}'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+new_url = '${new_url}'
+if new_url:
+    c['llm']['baseUrl'] = '\${WC_LLM_BASE_URL}'
+    # 更新 .env
+    env_path = '${ENV_FILE}'
+    with open(env_path, 'r') as f:
+        lines = f.readlines()
+    with open(env_path, 'w') as f:
+        for line in lines:
+            if line.startswith('WC_LLM_BASE_URL=') or line.startswith('LLM_BASE_URL='):
+                prefix = line.split('=')[0] + '='
+                f.write(prefix + new_url + '\n')
+            else:
+                f.write(line)
+c['llm']['model'] = '${new_model}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 模型配置已更新')
+print('   模型: ${new_model}')
+" 2>/dev/null
+      echo ""
+      echo "   重启容器生效: docker compose restart"
+      exit 0
+      ;;
+    4)
+      if [ -f "$ENV_FILE" ]; then
+        source "$ENV_FILE"
+      fi
+      read -p "   新的 API Key [${LLM_API_KEY:0:8}...]: " new_key
+      new_key="${new_key:-$LLM_API_KEY}"
+      if [ -z "$new_key" ]; then
+        echo "❌ API Key 不能为空"
+        exit 1
+      fi
+      # 更新 .env
+      python3 -c "
+env_path = '${ENV_FILE}'
+new_key = '${new_key}'
+with open(env_path, 'r') as f:
+    lines = f.readlines()
+with open(env_path, 'w') as f:
+    for line in lines:
+        if line.startswith('WC_LLM_API_KEY=') or line.startswith('LLM_API_KEY='):
+            prefix = line.split('=')[0] + '='
+            f.write(prefix + new_key + '\n')
+        else:
+            f.write(line)
+print('✅ API Key 已更新')
+"
+      echo ""
+      echo "   重启容器生效: docker compose restart"
+      exit 0
+      ;;
+    5)
+      echo "保持现有配置，跳过。"
+      exit 0
+      ;;
+    *)
+      # 选择1，继续完整重新配置
+      echo "→ 完全重新配置（将重新注册 Bot）"
+      echo ""
+      ;;
+  esac
 fi
 
 # 收集配置信息
