@@ -78,11 +78,13 @@ print('✅ Bot 名称已更新为: ${new_name}')
         if command -v curl &>/dev/null; then
           SYNC_RESULT=$(curl -s --max-time 10 -X PUT "${BOT_API_URL}/api/bot/${BOT_ID_CUR}/profile" \
             -H "Content-Type: application/json" \
+            -H "X-Bot-Id: ${BOT_ID_CUR}" \
             -H "X-Bot-Token: ${BOT_TOKEN}" \
             -d "{\"nickname\":\"${new_name}\"}" 2>&1)
         elif command -v wget &>/dev/null; then
           SYNC_RESULT=$(wget -qO- --timeout=10 \
             --header="Content-Type: application/json" \
+            --header="X-Bot-Id: ${BOT_ID_CUR}" \
             --header="X-Bot-Token: ${BOT_TOKEN}" \
             --post-data="{\"nickname\":\"${new_name}\"}" \
             "${BOT_API_URL}/api/bot/${BOT_ID_CUR}/profile" 2>&1)
@@ -90,7 +92,8 @@ print('✅ Bot 名称已更新为: ${new_name}')
         if echo "$SYNC_RESULT" | grep -q '"success"'; then
           echo "   ✅ 平台服务器已同步"
         else
-          echo "   ⚠️ 平台同步失败，响应: ${SYNC_RESULT:0:100}"
+          echo "   ⚠️ 平台同步失败（响应: ${SYNC_RESULT:0:100}）"
+          echo "   💡 名称会在容器启动连接平台后自动生效，不影响使用"
         fi
       else
         echo "   ⚠️ 未找到 Bot ID 或 Token，跳过平台同步"
