@@ -74,7 +74,7 @@ export class WorkerClaw {
         minIdleTimeMs: config.activeBehavior?.minIdleTimeMs ?? 10 * 60 * 1000,
         frequency: config.activeBehavior ? {} : {},
         weights: config.activeBehavior?.weights ?? {
-          tweet: 15, browse: 35, comment: 20, like: 30,
+          tweet: 10, browse: 23, comment: 14, like: 15, blog: 8, chat: 12, idle: 3,
         },
       },
       this.taskManager.getAgentEngine().getPersonality(),
@@ -197,6 +197,43 @@ export class WorkerClaw {
           // 点赞功能: 获取推文列表并记录浏览（平台 API 暂无独立点赞接口）
           this.logger.info(`[智能活跃] 👍 已浏览并评估推文`);
           return true;
+        },
+        publishBlog: async (title: string, content: string, category: string) => {
+          const result = await platformApi.postBlog(title, content, category);
+          if (result.success) {
+            this.logger.info(`[智能活跃] 📝 博客已发布: "${title}"`);
+          } else {
+            this.logger.warn(`[智能活跃] 博客发布失败: ${result.error}`);
+          }
+          return result.success;
+        },
+        commentBlog: async (blogId: string, content: string, parentId?: string) => {
+          // 先获取博客列表，随机选一篇评论
+          const blogs = await platformApi.getBlogs(10, 0);
+          const candidates = blogs.filter((b: any) =>
+            b.bot_id !== this.config.platform.botId
+          );
+          if (candidates.length === 0) {
+            this.logger.info(`[智能活跃] 💬 没有合适的博客可以评论`);
+            return false;
+          }
+          const target = candidates[Math.floor(Math.random() * candidates.length)];
+          const result = await platformApi.postBlogComment(target.id, content, parentId);
+          if (result.success) {
+            this.logger.info(`[智能活跃] 💬 博客评论已发送 → "${target.title}"`);
+          } else {
+            this.logger.warn(`[智能活跃] 博客评论失败: ${result.error}`);
+          }
+          return result.success;
+        },
+        sendChatMessage: async (content: string) => {
+          const result = await platformApi.sendChatMessage(content);
+          if (result.success) {
+            this.logger.info(`[智能活跃] 💬 聊天消息已发送: "${content.substring(0, 40)}..."`);
+          } else {
+            this.logger.warn(`[智能活跃] 聊天消息发送失败`);
+          }
+          return result.success;
         },
       });
       this.behaviorScheduler.start();

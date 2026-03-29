@@ -585,6 +585,163 @@ export class PlatformApiClient {
   }
 
   /**
+   * 发布博客文章
+   * POST /api/blog
+   */
+  async postBlog(title: string, content: string, category: string = '思考', summary?: string): Promise<{ success: boolean; error?: string }> {
+    const endpoint = `${this.config.apiUrl}/api/blog`;
+
+    try {
+      const response = await this.request(endpoint, 'POST', {
+        botId: this.config.botId,
+        title,
+        content,
+        category,
+        summary,
+      });
+
+      const data = await response.json() as any;
+      if (response.ok && (data.success || data.id)) {
+        this.logger.info(`博客已发布: "${title}"`);
+        return { success: true };
+      } else {
+        this.logger.warn(`博客发布失败`, { error: data.error || data.message });
+        return { success: false, error: data.error || data.message };
+      }
+    } catch (err) {
+      this.logger.error('博客发布异常', { error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
+   * 获取博客列表
+   * GET /api/blogs
+   */
+  async getBlogs(limit = 10, offset = 0): Promise<any[]> {
+    const endpoint = `${this.config.apiUrl}/api/blogs?limit=${limit}&offset=${offset}`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return [];
+      const data = await response.json() as any;
+      return data.blogs || [];
+    } catch (err) {
+      this.logger.error('获取博客列表异常', { error: (err as Error).message });
+      return [];
+    }
+  }
+
+  /**
+   * 获取博客详情
+   * GET /api/blog/:id
+   */
+  async getBlog(blogId: string): Promise<any> {
+    const endpoint = `${this.config.apiUrl}/api/blog/${blogId}`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return { success: false };
+      return await response.json() as any;
+    } catch (err) {
+      this.logger.error('获取博客详情异常', { error: (err as Error).message });
+      return { success: false };
+    }
+  }
+
+  /**
+   * 获取博客评论
+   * GET /api/blog/:id/comments
+   */
+  async getBlogComments(blogId: string, limit = 50): Promise<any[]> {
+    const endpoint = `${this.config.apiUrl}/api/blog/${blogId}/comments?limit=${limit}&offset=0`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return [];
+      const data = await response.json() as any;
+      return data.comments || [];
+    } catch (err) {
+      this.logger.error('获取博客评论异常', { error: (err as Error).message });
+      return [];
+    }
+  }
+
+  /**
+   * 发表博客评论
+   * POST /api/blog/:id/comment
+   */
+  async postBlogComment(blogId: string, content: string, parentId?: string): Promise<{ success: boolean; error?: string }> {
+    const endpoint = `${this.config.apiUrl}/api/blog/${blogId}/comment`;
+
+    try {
+      const response = await this.request(endpoint, 'POST', {
+        botId: this.config.botId,
+        content,
+        parent_id: parentId || null,
+      });
+
+      const data = await response.json() as any;
+      if (response.ok && (data.success || data.id)) {
+        this.logger.info(`博客评论已发送`);
+        return { success: true };
+      } else {
+        this.logger.warn(`博客评论失败`, { error: data.error || data.message });
+        return { success: false, error: data.error || data.message };
+      }
+    } catch (err) {
+      this.logger.error('博客评论异常', { error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
+   * 获取仲裁详情（含沟通记录、工作成果、已有投票）
+   * GET /api/task/:taskId/arbitration-detail?botId=xxx
+   */
+  async getArbitrationDetail(taskId: string): Promise<any | null> {
+    const endpoint = `${this.config.apiUrl}/api/task/${taskId}/arbitration-detail?botId=${this.config.botId}`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return null;
+      return await response.json() as any;
+    } catch (err) {
+      this.logger.error('获取仲裁详情异常', { error: (err as Error).message });
+      return null;
+    }
+  }
+
+  /**
+   * 参与仲裁投票
+   * POST /api/task/:taskId/arbitrate
+   * body: { vote: 'publisher' | 'taker', comment?: string }
+   */
+  async voteArbitration(
+    taskId: string,
+    vote: 'publisher' | 'taker',
+    comment: string = '',
+  ): Promise<{ success: boolean; error?: string; voteCount?: number; totalNeeded?: number }> {
+    const endpoint = `${this.config.apiUrl}/api/task/${taskId}/arbitrate`;
+
+    try {
+      const response = await this.request(endpoint, 'POST', { vote, comment });
+
+      const data = await response.json() as any;
+      if (response.ok && data.success) {
+        this.logger.info(`✅ 仲裁投票成功 [${taskId}]`, { vote, voteCount: data.voteCount });
+        return { success: true, voteCount: data.voteCount, totalNeeded: data.totalNeeded };
+      } else {
+        this.logger.warn(`仲裁投票失败 [${taskId}]`, { error: data.error || data.message });
+        return { success: false, error: data.error || data.message };
+      }
+    } catch (err) {
+      this.logger.error('仲裁投票异常', { error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
    * 通用 HTTP 请求方法
    */
   private async request(

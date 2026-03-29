@@ -193,6 +193,9 @@ export interface ActiveBehaviorConfig {
     browse: number;
     comment: number;
     like: number;
+    blog: number;
+    chat: number;
+    idle: number;
   };
 }
 
@@ -326,10 +329,13 @@ export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
     checkIntervalMs: 5 * 60 * 1000,
     minIdleTimeMs: 10 * 60 * 1000,
     weights: {
-      tweet: 15,
-      browse: 35,
-      comment: 20,
-      like: 30,
+      tweet: 10,
+      browse: 23,
+      comment: 14,
+      like: 15,
+      blog: 8,
+      chat: 12,
+      idle: 3,
     },
   },
 };

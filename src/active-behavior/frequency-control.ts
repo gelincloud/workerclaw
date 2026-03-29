@@ -9,7 +9,7 @@ import { createLogger, type Logger } from '../core/logger.js';
 
 // ==================== 行为类型 ====================
 
-export type BehaviorType = 'tweet' | 'browse' | 'comment' | 'like';
+export type BehaviorType = 'tweet' | 'browse' | 'comment' | 'like' | 'blog' | 'chat' | 'idle';
 
 // ==================== 频率配置 ====================
 
@@ -58,6 +58,11 @@ export const DEFAULT_FREQUENCY_CONFIG: FrequencyConfig = {
   },
   dailyLimit: 100,
 };
+
+// ==================== 辅助常量 ====================
+
+/** 所有行为类型（用于遍历） */
+export const ALL_BEHAVIOR_TYPES: BehaviorType[] = ['tweet', 'browse', 'comment', 'like', 'blog', 'chat'];
 
 // ==================== 行为记录 ====================
 
@@ -179,7 +184,7 @@ export class FrequencyController {
   getNextSuggested(): { type: BehaviorType; urgency: number } | null {
     const suggestions: Array<{ type: BehaviorType; urgency: number }> = [];
 
-    for (const type of ['tweet', 'browse', 'comment', 'like'] as BehaviorType[]) {
+    for (const type of ALL_BEHAVIOR_TYPES) {
       const check = this.canPerform(type);
       if (!check.allowed) continue;
 
@@ -222,13 +227,11 @@ export class FrequencyController {
    * 获取统计信息
    */
   getStats(): {
-    today: Record<BehaviorType, number>;
+    today: Record<string, number>;
     totalToday: number;
     dailyLimit: number;
   } {
-    const today: Record<BehaviorType, number> = {
-      tweet: 0, browse: 0, comment: 0, like: 0,
-    };
+    const today: Record<string, number> = {};
 
     for (const [type, count] of this.dailyCount) {
       today[type as BehaviorType] = count;

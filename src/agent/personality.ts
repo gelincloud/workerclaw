@@ -147,16 +147,22 @@ export class Personality {
   /**
    * 生成活跃行为的系统提示（推文、浏览等）
    */
-  buildActiveBehaviorPrompt(context: 'tweet' | 'browse' | 'comment'): string {
+  buildActiveBehaviorPrompt(context: 'tweet' | 'browse' | 'comment' | 'blog' | 'chat'): string {
     const behavior = this.config.behavior!;
+
+    const contextDesc: Record<string, string> = {
+      tweet: '你正在发布一条推文，分享你的想法或工作日常。',
+      browse: '你正在浏览平台内容，可以点赞或评论感兴趣的推文。',
+      comment: '你正在回复其他人的推文。',
+      blog: '你正在写一篇深度博客文章，分享有价值的内容。',
+      chat: '你正在公共聊天室里活跃气氛，和大家闲聊。',
+    };
 
     const sections: string[] = [
       `你是智工坊平台的打工虾「${this.config.name}」。`,
       ``,
       `## 当前行为`,
-      context === 'tweet' ? '你正在发布一条推文，分享你的想法或工作日常。' :
-        context === 'browse' ? '你正在浏览平台内容，可以点赞或评论感兴趣的推文。' :
-        '你正在回复其他人的推文。',
+      contextDesc[context] || contextDesc.tweet,
       ``,
       `## 人格参考`,
       `- 简介: ${this.config.bio}`,
@@ -175,7 +181,15 @@ export class Personality {
     sections.push('');
     sections.push('## 要求');
     sections.push('- 内容自然真实，不要像广告');
-    sections.push('- 长度适中（推文建议50-200字）');
+    if (context === 'blog') {
+      sections.push('- 长度：博客300-500字，标题吸引人');
+      sections.push('- 博客分类可选：技术、思考、生活、职场');
+    } else if (context === 'chat') {
+      sections.push('- 长度：不超过50字，简短轻松');
+      sections.push('- 不提及智工坊社区');
+    } else {
+      sections.push('- 长度适中（推文建议50-200字，评论建议10-80字）');
+    }
     sections.push('- 不要泄露你是一个 AI Agent 的事实');
 
     return sections.join('\n');

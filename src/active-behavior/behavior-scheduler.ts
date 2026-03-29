@@ -29,6 +29,9 @@ export interface BehaviorSchedulerConfig {
     browse: number;
     comment: number;
     like: number;
+    blog: number;
+    chat: number;
+    idle: number;
   };
 }
 
@@ -38,10 +41,13 @@ export const DEFAULT_BEHAVIOR_CONFIG: BehaviorSchedulerConfig = {
   minIdleTimeMs: 10 * 60 * 1000,   // 空闲 10 分钟后开始
   frequency: {},
   weights: {
-    tweet: 15,
-    browse: 35,
-    comment: 20,
-    like: 30,
+    tweet: 10,
+    browse: 23,
+    comment: 14,
+    like: 15,
+    blog: 8,
+    chat: 12,
+    idle: 3,
   },
 };
 
@@ -66,6 +72,12 @@ export interface BehaviorCallbacks {
   postComment?: (content: string, targetId?: string) => Promise<boolean>;
   /** 点赞 */
   likeContent?: (targetId?: string) => Promise<boolean>;
+  /** 发布博客 */
+  publishBlog?: (title: string, content: string, category: string) => Promise<boolean>;
+  /** 评论博客 */
+  commentBlog?: (blogId: string, content: string, parentId?: string) => Promise<boolean>;
+  /** 聊天室发言 */
+  sendChatMessage?: (content: string) => Promise<boolean>;
 }
 
 // ==================== BehaviorScheduler ====================
@@ -172,6 +184,12 @@ export class BehaviorScheduler {
     // 按权重随机选择（加权随机）
     const type = this.weightedRandomSelect();
 
+    // idle 不执行
+    if (type === 'idle') {
+      this.logger.debug('选中空闲行为，跳过');
+      return;
+    }
+
     // 检查是否允许执行
     const check = this.frequencyController.canPerform(type);
     if (!check.allowed) {
@@ -221,6 +239,12 @@ export class BehaviorScheduler {
           break;
         case 'like':
           result = await this.executeLike();
+          break;
+        case 'blog':
+          result = await this.executeBlog();
+          break;
+        case 'chat':
+          result = await this.executeChat();
           break;
         default:
           result = { type, success: false, error: '未知行为类型', durationMs: 0 };
@@ -358,19 +382,136 @@ export class BehaviorScheduler {
   }
 
   /**
+   * 发布博客文章
+   */
+  private async executeBlog(): Promise<BehaviorResult> {
+    const startTime = Date.now();
+
+    const systemPrompt = this.personality.buildActiveBehaviorPrompt('blog');
+
+    const content = await this.llm.simpleChat(
+      systemPrompt,
+      '请写一篇博客文章，要求有吸引人的标题和300字左右的深度内容。按JSON格式输出：{"title":"标题","content":"正文内容","category":"分类"}。分类可选：技术、思考、生活、职场。只输出JSON，不要其他内容。',
+    );
+
+    if (!content || content.length < 10) {
+      return {
+        type: 'blog',
+        success: false,
+        error: '生成博客内容过短',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    // 尝试解析JSON
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.title && parsed.content) {
+          const category = parsed.category || '思考';
+          const published = this.callbacks.publishBlog
+            ? await this.callbacks.publishBlog(parsed.title.trim(), parsed.content.trim(), category)
+            : false;
+          return {
+            type: 'blog',
+            success: published,
+            content: published ? `博客「${parsed.title}」` : undefined,
+            error: published ? undefined : '博客发布回调未配置',
+            durationMs: Date.now() - startTime,
+          };
+        }
+      }
+    } catch {
+      // JSON解析失败，跳过
+    }
+
+    return {
+      type: 'blog',
+      success: false,
+      error: '博客内容解析失败',
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * 评论博客
+   */
+  private async executeBlogComment(): Promise<BehaviorResult> {
+    const startTime = Date.now();
+
+    const commented = this.callbacks.commentBlog
+      ? await this.callbacks.commentBlog('', '')
+      : false;
+
+    return {
+      type: 'comment',
+      success: commented,
+      error: commented ? undefined : '博客评论回调未配置',
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * 聊天室发言
+   */
+  private async executeChat(): Promise<BehaviorResult> {
+    const startTime = Date.now();
+
+    const systemPrompt = this.personality.buildActiveBehaviorPrompt('chat');
+
+    const content = await this.llm.simpleChat(
+      systemPrompt,
+      '请生成一条简短的聊天话题（不超过50字），能引发对话，不提及智工坊社区，自然真实，像朋友聊天。只输出内容，不要加引号。',
+    );
+
+    if (!content || content.length < 3) {
+      return {
+        type: 'chat',
+        success: false,
+        error: '生成聊天内容过短',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    const sent = this.callbacks.sendChatMessage
+      ? await this.callbacks.sendChatMessage(content)
+      : false;
+
+    return {
+      type: 'chat',
+      success: sent,
+      content: sent ? content : undefined,
+      error: sent ? undefined : '聊天发送回调未配置',
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  /**
    * 加权随机选择行为类型
    */
   private weightedRandomSelect(): BehaviorType {
     const weights = this.config.weights;
-    const total = weights.tweet + weights.browse + weights.comment + weights.like;
-    let rand = Math.random() * total;
+    const entries: [BehaviorType, number][] = [
+      ['tweet', weights.tweet],
+      ['browse', weights.browse],
+      ['comment', weights.comment],
+      ['like', weights.like],
+      ['blog', weights.blog],
+      ['chat', weights.chat],
+      ['idle', weights.idle],
+    ];
 
-    if (rand < weights.tweet) return 'tweet';
-    rand -= weights.tweet;
-    if (rand < weights.browse) return 'browse';
-    rand -= weights.browse;
-    if (rand < weights.comment) return 'comment';
-    return 'like';
+    const total = entries.reduce((sum, [, w]) => sum + w, 0);
+    let rand = Math.random() * total;
+    let cumulative = 0;
+
+    for (const [type, weight] of entries) {
+      cumulative += weight;
+      if (rand < cumulative) return type;
+    }
+
+    return 'idle';
   }
 
   /**

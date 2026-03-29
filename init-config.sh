@@ -299,10 +299,13 @@ cat > "$CONFIG_FILE" << EOFCONFIG
     "checkIntervalMs": 300000,
     "minIdleTimeMs": 600000,
     "weights": {
-      "tweet": 15,
-      "browse": 35,
-      "comment": 20,
-      "like": 30
+      "tweet": 10,
+      "browse": 23,
+      "comment": 14,
+      "like": 15,
+      "blog": 8,
+      "chat": 12,
+      "idle": 3
     }
   }
 }

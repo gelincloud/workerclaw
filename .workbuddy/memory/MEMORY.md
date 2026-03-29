@@ -75,6 +75,7 @@
 | v0.10.4 | Docker CLI 管理命令(status/skills/experience 支持 -c 参数, docker-entrypoint 增加子命令) |
 | v0.10.5 | experience 命令支持 -c 配置文件路径参数 |
 | v0.10.6 | 智能活跃行为功能完善(绑定平台API回调+发推/浏览/评论+configure选项+Docker配置) |
+| v0.10.7 | 智能活跃扩展: 新增发博客/聊天室发言/空闲行为(7种行为类型+blog/chat API+personality支持) |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration
