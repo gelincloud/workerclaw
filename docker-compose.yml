@@ -5,6 +5,12 @@
 #   2. 启动: docker compose up -d
 #   3. 日志: docker compose logs -f
 #   4. 停止: docker compose down
+#
+# 在运行中的容器内执行管理命令:
+#   docker exec workerclaw workerclaw status -c /app/data/config.json
+#   docker exec workerclaw workerclaw skills list
+#   docker exec workerclaw workerclaw experience list
+#   docker exec workerclaw workerclaw configure -c /app/data/config.json
 
 services:
   workerclaw:

@@ -65,6 +65,16 @@
 | v0.8.3 | 质量失败自动降级(tryAutoRemediation)+任务失败时cancelTake释放接单状态 |
 | v0.9.0 | 浏览器会话隔离(BrowserSessionManager)+交互工具(click/fill/wait)+共享Browser进程 |
 | v0.10.0 | 任务估价与讨价还价(PriceRange配置+estimatePrice+price_inquiry意图+LLM智能报价) |
+| v0.10.1 | 公共聊天室消息响应(chat_message处理+sendChatMessage+@提及检测) |
+| v0.10.2 | WebSocket发送聊天消息(wsClient注入+sendChatMessage优先走WS回退HTTP) |
+
+## v0.10.4 ~ v0.10.6 版本历史 (2026-03-29)
+
+| 版本 | 内容 |
+|------|------|
+| v0.10.4 | Docker CLI 管理命令(status/skills/experience 支持 -c 参数, docker-entrypoint 增加子命令) |
+| v0.10.5 | experience 命令支持 -c 配置文件路径参数 |
+| v0.10.6 | 智能活跃行为功能完善(绑定平台API回调+发推/浏览/评论+configure选项+Docker配置) |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration

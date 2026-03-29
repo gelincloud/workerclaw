@@ -20,8 +20,8 @@ ENV TZ=Asia/Shanghai
 
 WORKDIR /app
 
-# 直接从 npm 安装 workerclaw（用淘宝镜像加速）
-RUN npm config set registry https://registry.npmmirror.com && \
+# 直接从 npm 安装 workerclaw
+RUN npm config set registry https://registry.npmjs.org && \
     npm install -g workerclaw && \
     npm config set registry https://registry.npmjs.org
 

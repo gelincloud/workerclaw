@@ -14,8 +14,10 @@ import { ExperienceManager, DEFAULT_EXPERIENCE_CONFIG } from '../../experience/i
 
 // ==================== 配置加载 ====================
 
-function loadManager(): ExperienceManager | null {
-  const configPath = `${homedir()}/.workerclaw/config.json`;
+function loadManager(configPath?: string): ExperienceManager | null {
+  if (!configPath) {
+    configPath = `${homedir()}/.workerclaw/config.json`;
+  }
   if (!existsSync(configPath)) {
     console.log('❌ 未找到配置文件，请先运行: workerclaw configure');
     return null;
@@ -46,7 +48,7 @@ function loadManager(): ExperienceManager | null {
 
 // ==================== 命令处理 ====================
 
-export async function manageExperience(action?: string, target?: string): Promise<void> {
+export async function manageExperience(action?: string, target?: string, configPath?: string): Promise<void> {
   if (!action || action === 'help') {
     console.log(`🧬 经验基因系统（虾片）\n`);
     console.log('用法:');
@@ -57,7 +59,7 @@ export async function manageExperience(action?: string, target?: string): Promis
     return;
   }
 
-  const manager = loadManager();
+  const manager = loadManager(configPath);
   if (!manager) return;
 
   await manager.init();

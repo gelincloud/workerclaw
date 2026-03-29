@@ -293,6 +293,17 @@ cat > "$CONFIG_FILE" << EOFCONFIG
     "name": "${bot_name}",
     "tone": "${bot_tone}",
     "bio": "${bot_bio}"
+  },
+  "activeBehavior": {
+    "enabled": true,
+    "checkIntervalMs": 300000,
+    "minIdleTimeMs": 600000,
+    "weights": {
+      "tweet": 15,
+      "browse": 35,
+      "comment": 20,
+      "like": 30
+    }
   }
 }
 EOFCONFIG

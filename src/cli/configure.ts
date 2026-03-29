@@ -98,6 +98,20 @@ export async function configureWizard(
   // 合并配置
   const finalConfig = buildFinalConfig(existingConfig, results);
 
+  // 智能活跃行为确认（只在已有配置时询问，首次配置默认启用）
+  if (existingConfig?.platform?.botId) {
+    const enableActive = await confirm(
+      '是否启用智能活跃？（发推文/浏览/评论/点赞等自动行为）',
+      finalConfig.activeBehavior?.enabled ?? true,
+    );
+    finalConfig.activeBehavior = {
+      enabled: enableActive,
+      checkIntervalMs: finalConfig.activeBehavior?.checkIntervalMs ?? DEFAULT_CONFIG.activeBehavior!.checkIntervalMs,
+      minIdleTimeMs: finalConfig.activeBehavior?.minIdleTimeMs ?? DEFAULT_CONFIG.activeBehavior!.minIdleTimeMs,
+      weights: finalConfig.activeBehavior?.weights ?? DEFAULT_CONFIG.activeBehavior!.weights,
+    };
+  }
+
   // 确认保存
   const shouldSave = await confirm('保存配置？', true);
   if (!shouldSave) {
@@ -118,6 +132,7 @@ export async function configureWizard(
   console.log(`  🔑 Token:    ${finalConfig.platform.token}`);
   console.log(`  👤 Agent:    ${finalConfig.personality?.name || finalConfig.platform.agentName || '未设置'}`);
   console.log(`  🧠 LLM:      ${finalConfig.llm.provider} / ${finalConfig.llm.model}`);
+  console.log(`  🤖 智能活跃: ${finalConfig.activeBehavior?.enabled ? '已启用' : '已禁用'}`);
   console.log(`  🌐 WebSocket: ${finalConfig.platform.wsUrl}`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  运行 workerclaw start 启动打工虾！');

@@ -188,8 +188,15 @@ const main = defineCommand({
         name: 'status',
         description: '查看 WorkerClaw 状态',
       },
-      async run() {
-        const configPath = findConfigPath();
+      args: {
+        'config-file': {
+          type: 'string',
+          description: '配置文件路径',
+          alias: 'c',
+        },
+      },
+      async run({ args }) {
+        const configPath = findConfigPath(args['config-file'] as string);
 
         if (!configPath) {
           console.log('❌ 未找到配置文件');
@@ -248,6 +255,11 @@ const main = defineCommand({
           required: false,
           description: '目标（包名或路径）',
         },
+        'config-file': {
+          type: 'string',
+          description: '配置文件路径',
+          alias: 'c',
+        },
       },
       async run({ args }) {
         const { manageSkills } = await import('./sections/skills.js');
@@ -272,9 +284,14 @@ const main = defineCommand({
           required: false,
           description: '搜索关键词（search 时使用）',
         },
+        'config-file': {
+          type: 'string',
+          description: '配置文件路径',
+          alias: 'c',
+        },
       },
       async run({ args }) {
-        await import('./sections/experience.js').then(m => m.manageExperience(args.action as string, args.target as string));
+        await import('./sections/experience.js').then(m => m.manageExperience(args.action as string, args.target as string, args['config-file'] as string));
       },
     }),
   },

@@ -389,14 +389,7 @@ export class PlatformApiClient {
 
       // WebSocket 不可用，回退到 HTTP API
       const endpoint = `${this.config.apiUrl}/api/chat/messages`;
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ botId: this.config.botId, content }),
-        signal: AbortSignal.timeout(15000),
-      });
+      const response = await this.request(endpoint, 'POST', { botId: this.config.botId, content });
 
       const data = await response.json() as any;
       if (response.ok && data.success) {
@@ -424,15 +417,7 @@ export class PlatformApiClient {
     const endpoint = `${this.config.apiUrl}/api/private-messages`;
 
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.token}`,
-        },
-        body: JSON.stringify({ senderId, receiverId, content }),
-        signal: AbortSignal.timeout(15000),
-      });
+      const response = await this.request(endpoint, 'POST', { senderId, receiverId, content });
 
       const data = await response.json() as any;
       if (response.ok && (data.success || data.id)) {
@@ -459,15 +444,7 @@ export class PlatformApiClient {
     const endpoint = `${this.config.apiUrl}/api/tweet/${tweetId}/comment`;
 
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.token}`,
-        },
-        body: JSON.stringify({ botId: this.config.botId, content }),
-        signal: AbortSignal.timeout(15000),
-      });
+      const response = await this.request(endpoint, 'POST', { botId: this.config.botId, content });
 
       const data = await response.json() as any;
       if (response.ok && (data.success || data.id)) {
@@ -517,15 +494,7 @@ export class PlatformApiClient {
     const endpoint = `${this.config.apiUrl}/api/task/${taskId}/cancel-take`;
 
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.token}`,
-        },
-        body: JSON.stringify({ takerId: this.config.botId }),
-        signal: AbortSignal.timeout(10000),
-      });
+      const response = await this.request(endpoint, 'POST', { takerId: this.config.botId });
 
       const data = await response.json() as any;
       if (response.ok && (data.success || data.ok)) {
@@ -550,15 +519,7 @@ export class PlatformApiClient {
     const endpoint = `${this.config.apiUrl}/api/task/${taskId}/apply-arbitration`;
 
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.token}`,
-        },
-        body: JSON.stringify({ botId: this.config.botId }),
-        signal: AbortSignal.timeout(10000),
-      });
+      const response = await this.request(endpoint, 'POST', { botId: this.config.botId });
 
       const data = await response.json() as any;
       if (response.ok && (data.success || data.ok)) {
@@ -571,6 +532,55 @@ export class PlatformApiClient {
     } catch (err) {
       this.logger.error('申请仲裁异常', { error: (err as Error).message });
       return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
+   * 发布推文
+   * POST /api/tweet
+   */
+  async postTweet(content: string, category: string = '闲谈广场'): Promise<{ success: boolean; error?: string }> {
+    const endpoint = `${this.config.apiUrl}/api/tweet`;
+
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const response = await this.request(endpoint, 'POST', {
+        botId: this.config.botId,
+        content,
+        images: [],
+        category,
+        timezone,
+      });
+
+      const data = await response.json() as any;
+      if (response.ok && (data.success || data.id)) {
+        this.logger.info(`推文已发布: "${content.substring(0, 30)}..."`);
+        return { success: true };
+      } else {
+        this.logger.warn(`推文发布失败`, { error: data.error || data.message });
+        return { success: false, error: data.error || data.message };
+      }
+    } catch (err) {
+      this.logger.error('推文发布异常', { error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
+   * 获取推文列表
+   * GET /api/tweets
+   */
+  async getTweets(limit = 20, offset = 0): Promise<any[]> {
+    const endpoint = `${this.config.apiUrl}/api/tweets?limit=${limit}&offset=${offset}`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return [];
+      const data = await response.json() as any;
+      return data.tweets || [];
+    } catch (err) {
+      this.logger.error('获取推文列表异常', { error: (err as Error).message });
+      return [];
     }
   }
 
@@ -588,6 +598,9 @@ export class PlatformApiClient {
 
     if (this.config.token) {
       headers['Authorization'] = `Bearer ${this.config.token}`;
+      // 同时发送 X-Bot-Id + X-Bot-Token，供服务端 JWT 中间件的 agent fallback 认证
+      headers['X-Bot-Id'] = this.config.botId;
+      headers['X-Bot-Token'] = this.config.token;
     }
 
     const options: RequestInit = {
