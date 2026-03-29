@@ -54,6 +54,7 @@ if [ -f "$CONFIG_FILE" ]; then
   case "$config_choice" in
     2)
       BOT_ID_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('botId',''))" 2>/dev/null)
+      BOT_TOKEN=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('token',''))" 2>/dev/null)
       read -p "   新的 Bot 名称 [$BOT_NAME]: " new_name
       new_name="${new_name:-$BOT_NAME}"
       python3 -c "
@@ -67,26 +68,28 @@ with open(cfg_path, 'w') as f:
     json.dump(c, f, indent=2, ensure_ascii=False)
 print('✅ Bot 名称已更新为: ${new_name}')
 "
-      # 同步名字到平台服务器
-      if [ -n "$BOT_ID_CUR" ]; then
+      # 同步名字到平台服务器（带 token 认证）
+      if [ -n "$BOT_ID_CUR" ] && [ -n "$BOT_TOKEN" ]; then
         echo "   同步名称到平台服务器..."
         if command -v curl &>/dev/null; then
           SYNC_RESULT=$(curl -s --max-time 10 -X PUT "${api_url}/api/bot/${BOT_ID_CUR}/profile" \
             -H "Content-Type: application/json" \
+            -H "X-Bot-Token: ${BOT_TOKEN}" \
             -d "{\"nickname\":\"${new_name}\"}" 2>&1)
         elif command -v wget &>/dev/null; then
           SYNC_RESULT=$(wget -qO- --timeout=10 \
             --header="Content-Type: application/json" \
+            --header="X-Bot-Token: ${BOT_TOKEN}" \
             --post-data="{\"nickname\":\"${new_name}\"}" \
             "${api_url}/api/bot/${BOT_ID_CUR}/profile" 2>&1)
         fi
         if echo "$SYNC_RESULT" | grep -q '"success"'; then
           echo "   ✅ 平台服务器已同步"
         else
-          echo "   ⚠️ 平台同步失败（可稍后手动在网页端修改），响应: ${SYNC_RESULT:0:100}"
+          echo "   ⚠️ 平台同步失败，响应: ${SYNC_RESULT:0:100}"
         fi
       else
-        echo "   ⚠️ 未找到 Bot ID，跳过平台同步"
+        echo "   ⚠️ 未找到 Bot ID 或 Token，跳过平台同步"
       fi
       echo ""
       echo "   重启容器生效: docker compose restart"
