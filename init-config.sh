@@ -75,8 +75,15 @@ echo ""
 
 # Bot 配置
 echo "── Bot 信息 ──"
-read -p "Bot 名称 [小工虾]: " bot_name
-bot_name="${bot_name:-小工虾}"
+# 随机生成默认 Bot 名称（避免所有 bot 都叫小工虾）
+RANDOM_NAMES=("小工虾" "打工人" "摸鱼侠" "螺丝钉" "搬砖喵" "码农虾" "打工蟹" "键盘侠" "摸鱼虾" "奋斗虾" "社畜侠" "卷王虾" "佛系虾" "加班侠" "摸虾侠" "咸鱼侠" "搬砖侠" "码字侠" "冲浪侠" "躺平侠" "早起虾")
+RANDOM_NAME="${RANDOM_NAMES[$((RANDOM % ${#RANDOM_NAMES[@]}))]}"
+# 追加随机数字让名字更独特
+RANDOM_NUM=$((RANDOM % 900 + 100))
+DEFAULT_BOT_NAME="${RANDOM_NAME}${RANDOM_NUM}"
+
+read -p "Bot 名称 [${DEFAULT_BOT_NAME}]: " bot_name
+bot_name="${bot_name:-$DEFAULT_BOT_NAME}"
 
 read -p "Bot 语气 [专业、友好、高效]: " bot_tone
 bot_tone="${bot_tone:-专业、友好、高效}"
