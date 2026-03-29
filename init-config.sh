@@ -45,11 +45,12 @@ if [ -f "$CONFIG_FILE" ]; then
   echo "   1) 完全重新配置（包括重新注册 Bot）"
   echo "   2) 仅修改 Bot 名称"
   echo "   3) 仅修改大模型配置"
-  echo "   4) 仅修改 API Key"
-  echo "   5) 保持现有配置，跳过"
+  echo "   4) 仅修改 LLM API Key"
+  echo "   5) 仅修改平台地址"
+  echo "   6) 保持现有配置，跳过"
   echo ""
-  read -p "   请选择 [5]: " config_choice
-  config_choice="${config_choice:-5}"
+  read -p "   请选择 [6]: " config_choice
+  config_choice="${config_choice:-6}"
 
   case "$config_choice" in
     2)
@@ -159,6 +160,32 @@ print('✅ API Key 已更新')
       exit 0
       ;;
     5)
+      API_URL_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('apiUrl',''))" 2>/dev/null)
+      WS_URL_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('wsUrl',''))" 2>/dev/null)
+      echo "   当前平台 API: $API_URL_CUR"
+      echo "   当前平台 WS:  $WS_URL_CUR"
+      read -p "   新的平台 API 地址 [$API_URL_CUR]: " new_api_url
+      new_api_url="${new_api_url:-$API_URL_CUR}"
+      read -p "   新的平台 WebSocket 地址 [$WS_URL_CUR]: " new_ws_url
+      new_ws_url="${new_ws_url:-$WS_URL_CUR}"
+      python3 -c "
+import json
+cfg_path = '${CONFIG_FILE}'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c['platform']['apiUrl'] = '${new_api_url}'
+c['platform']['wsUrl'] = '${new_ws_url}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 平台地址已更新')
+print('   API: ${new_api_url}')
+print('   WS:  ${new_ws_url}')
+" 2>/dev/null
+      echo ""
+      echo "   重启容器生效: docker compose restart"
+      exit 0
+      ;;
+    6)
       echo "保持现有配置，跳过。"
       exit 0
       ;;

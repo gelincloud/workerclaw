@@ -51,12 +51,13 @@ case "${1:-start}" in
     echo "  status             查看运行状态"
     echo "  skills [list]      查看技能列表"
     echo "  experience [list]  查看经验基因"
-    echo "  configure          修改配置（名称/模型/API Key等）"
+    echo "  configure          配置管理（改名字/改模型/改Key/改平台/全部重配）"
     echo "  shell              进入容器 shell"
     echo ""
     echo "或者用 docker exec 在运行中的容器内执行："
     echo "  docker exec workerclaw workerclaw status -c /app/data/config.json"
     echo "  docker exec workerclaw workerclaw skills list"
+    echo "  docker exec -it workerclaw workerclaw configure -c /app/data/config.json"
     exit 1
     ;;
 esac

@@ -76,6 +76,7 @@
 | v0.10.5 | experience 命令支持 -c 配置文件路径参数 |
 | v0.10.6 | 智能活跃行为功能完善(绑定平台API回调+发推/浏览/评论+configure选项+Docker配置) |
 | v0.10.7 | 智能活跃扩展: 新增发博客/聊天室发言/空闲行为(7种行为类型+blog/chat API+personality支持) |
+| v0.11.0 | 仲裁参与功能(task_arbitration_applied监听+LLM评审+getArbitrationDetail+voteArbitration) |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration

@@ -4,7 +4,7 @@
  * 类似 openclaw configure，引导用户完成所有配置
  */
 
-import { intro, outro, select, confirm, spinner } from './prompter.js';
+import { intro, outro, select, confirm, spinner, text, password, num } from './prompter.js';
 import { configurePlatform, type PlatformSectionResult } from './sections/platform.js';
 import { configureLLM, type LLMSectionResult } from './sections/llm.js';
 import { configurePersonality, type PersonalitySectionResult } from './sections/personality.js';
@@ -34,16 +34,225 @@ export async function configureWizard(
   section?: string,
   configPath?: string,
 ): Promise<void> {
-  intro('🦞 WorkerClaw 配置向导');
-  console.log('  让我们快速配置你的打工虾！\n');
-
   const cfgPath = configPath || DEFAULT_CONFIG_PATH;
   const existingConfig = loadExistingConfig(cfgPath);
 
-  // 确定要配置的区域
-  const sections = resolveSections(section, existingConfig ?? undefined);
+  // 如果指定了 section，直接进入对应区域（跳过快捷菜单）
+  if (section) {
+    intro('🦞 WorkerClaw 配置向导');
+    console.log('  让我们快速配置你的打工虾！\n');
+    await runSections([section as ConfigSection], existingConfig, cfgPath);
+    return;
+  }
 
-  // 按顺序配置每个区域
+  // 已有配置时，显示快捷菜单
+  if (existingConfig?.platform?.botId) {
+    intro('🦞 WorkerClaw 配置管理');
+
+    const botName = existingConfig.personality?.name || existingConfig.platform.agentName || '未设置';
+    const botId = existingConfig.platform.botId;
+    const llmModel = existingConfig.llm?.model || '未知';
+    const apiUrl = existingConfig.platform.apiUrl || '未知';
+
+    console.log('');
+    console.log(`  📄 配置文件: ${cfgPath}`);
+    console.log(`  👤 Bot 名称:  ${botName}`);
+    console.log(`  🤖 Bot ID:    ${botId}`);
+    console.log(`  🧠 模型:      ${llmModel}`);
+    console.log(`  🌐 平台:      ${apiUrl}`);
+    console.log('');
+
+    const choice = await select('选择操作', [
+      { value: 'name', label: '修改 Bot 名称', hint: `当前: ${botName}` },
+      { value: 'llm', label: '修改大模型配置', hint: `当前: ${llmModel}` },
+      { value: 'api_key', label: '修改 API Key', hint: 'LLM / 平台 Token' },
+      { value: 'platform', label: '修改平台地址', hint: `当前: ${apiUrl}` },
+      { value: 'active', label: '智能活跃设置', hint: '发推文/浏览/评论等自动行为' },
+      { value: 'full', label: '完全重新配置', hint: '包括重新注册 Bot' },
+    ], 'name');
+
+    if (!choice) {
+      outro('配置未修改');
+      return;
+    }
+
+    switch (choice) {
+      case 'name':
+        await quickChangeName(existingConfig, cfgPath);
+        break;
+      case 'llm':
+        await runSections(['llm'], existingConfig, cfgPath);
+        break;
+      case 'api_key':
+        await quickChangeApiKey(existingConfig, cfgPath);
+        break;
+      case 'platform':
+        await quickChangePlatform(existingConfig, cfgPath);
+        break;
+      case 'active':
+        await quickToggleActive(existingConfig, cfgPath);
+        break;
+      case 'full':
+        intro('🦞 WorkerClaw 配置向导');
+        console.log('  让我们快速配置你的打工虾！\n');
+        await runSections(['platform', 'llm', 'personality'], null, cfgPath);
+        break;
+    }
+    return;
+  }
+
+  // 首次配置，走完整流程
+  intro('🦞 WorkerClaw 配置向导');
+  console.log('  让我们快速配置你的打工虾！\n');
+  const sections = resolveSections(undefined, existingConfig ?? undefined);
+  await runSections(sections, existingConfig, cfgPath);
+}
+
+/**
+ * 快捷修改 Bot 名称
+ */
+async function quickChangeName(existing: Partial<WorkerClawConfig> | null, cfgPath: string): Promise<void> {
+  const currentName = existing?.personality?.name || existing?.platform?.agentName || '';
+  const newName = await text('新的 Bot 名称', undefined, currentName);
+  if (!newName || newName === currentName) {
+    outro('名称未修改');
+    return;
+  }
+
+  const finalConfig = buildFinalConfig(existing, {
+    personality: { name: newName, tone: existing?.personality?.tone ?? '', bio: existing?.personality?.bio ?? '' },
+    platform: { agentName: newName } as any,
+  });
+  saveConfig(cfgPath, finalConfig);
+
+  console.log('');
+  console.log(`✅ Bot 名称已更新: ${currentName} → ${newName}`);
+
+  // 尝试同步到平台
+  if (existing?.platform?.botId && existing?.platform?.token) {
+    const spin = spinner();
+    spin.start('正在同步名称到平台...');
+    try {
+      const resp = await fetch(
+        `${finalConfig.platform.apiUrl}/api/bot/${existing.platform.botId}/profile`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Bot-Token': existing.platform.token },
+          body: JSON.stringify({ nickname: newName }),
+          signal: AbortSignal.timeout(10000),
+        },
+      );
+      if (resp.ok) {
+        spin.stop('名称已同步到智工坊平台');
+      } else {
+        spin.stop(`平台同步失败 (HTTP ${resp.status})，名称仅本地生效`);
+      }
+    } catch {
+      spin.stop('平台同步失败，名称仅本地生效');
+    }
+  }
+
+  outro('配置已保存');
+}
+
+/**
+ * 快捷修改 API Key
+ */
+async function quickChangeApiKey(existing: Partial<WorkerClawConfig> | null, cfgPath: string): Promise<void> {
+  const choice = await select('选择要修改的 Key', [
+    { value: 'llm', label: 'LLM API Key', hint: `当前: ${(existing?.llm?.apiKey || '').slice(0, 12)}...` },
+    { value: 'token', label: '平台 Token', hint: `当前: ${(existing?.platform?.token || '').slice(0, 12)}...` },
+  ], 'llm');
+
+  if (!choice) {
+    outro('未修改');
+    return;
+  }
+
+  if (choice === 'llm') {
+    const newKey = await password('新的 LLM API Key');
+    if (!newKey) { outro('未修改'); return; }
+
+    const finalConfig = buildFinalConfig(existing, { llm: { apiKey: newKey } } as any);
+    saveConfig(cfgPath, finalConfig);
+    console.log(`\n✅ LLM API Key 已更新`);
+  } else {
+    const newToken = await password('新的平台 Token');
+    if (!newToken) { outro('未修改'); return; }
+
+    const finalConfig = buildFinalConfig(existing, { platform: { token: newToken } } as any);
+    saveConfig(cfgPath, finalConfig);
+    console.log(`\n✅ 平台 Token 已更新`);
+  }
+
+  outro('配置已保存');
+}
+
+/**
+ * 快捷修改平台地址
+ */
+async function quickChangePlatform(existing: Partial<WorkerClawConfig> | null, cfgPath: string): Promise<void> {
+  const currentApiUrl = existing?.platform?.apiUrl || DEFAULT_PLATFORM_URL;
+  const currentWsUrl = existing?.platform?.wsUrl || DEFAULT_WS_URL;
+
+  const newApiUrl = await text('平台 API 地址', undefined, currentApiUrl);
+  if (!newApiUrl) { outro('未修改'); return; }
+
+  const newWsUrl = await text('平台 WebSocket 地址', undefined, currentWsUrl);
+  if (!newWsUrl) { outro('未修改'); return; }
+
+  const finalConfig = buildFinalConfig(existing, {
+    platform: { apiUrl: newApiUrl.replace(/\/$/, ''), wsUrl: newWsUrl.replace(/\/$/, '') } as any,
+  });
+  saveConfig(cfgPath, finalConfig);
+  console.log(`\n✅ 平台地址已更新`);
+  console.log(`   API: ${currentApiUrl} → ${newApiUrl.replace(/\/$/, '')}`);
+  console.log(`   WS:  ${currentWsUrl} → ${newWsUrl.replace(/\/$/, '')}`);
+
+  outro('配置已保存');
+}
+
+/**
+ * 快捷切换智能活跃
+ */
+async function quickToggleActive(existing: Partial<WorkerClawConfig> | null, cfgPath: string): Promise<void> {
+  const enabled = existing?.activeBehavior?.enabled ?? true;
+  const choice = await select('智能活跃设置', [
+    { value: 'toggle', label: enabled ? '禁用智能活跃' : '启用智能活跃', hint: enabled ? '当前: 已启用' : '当前: 已禁用' },
+    { value: 'interval', label: '修改检查间隔', hint: `当前: ${((existing?.activeBehavior?.checkIntervalMs ?? 300000) / 1000 / 60).toFixed(0)} 分钟` },
+  ], 'toggle');
+
+  if (!choice) { outro('未修改'); return; }
+
+  const finalConfig = buildFinalConfig(existing, {});
+  if (choice === 'toggle') {
+    finalConfig.activeBehavior = {
+      ...finalConfig.activeBehavior!,
+      enabled: !enabled,
+    };
+    console.log(`\n✅ 智能活跃已${!enabled ? '启用' : '禁用'}`);
+  } else {
+    const minutes = await num('检查间隔（分钟）', (existing?.activeBehavior?.checkIntervalMs ?? 300000) / 1000 / 60, 1, 60);
+    if (!minutes) { outro('未修改'); return; }
+    finalConfig.activeBehavior = {
+      ...finalConfig.activeBehavior!,
+      checkIntervalMs: minutes * 60 * 1000,
+    };
+    console.log(`\n✅ 检查间隔已更新为 ${minutes} 分钟`);
+  }
+
+  saveConfig(cfgPath, finalConfig);
+  outro('配置已保存');
+}
+
+/**
+ * 按区域执行配置流程
+ */
+async function runSections(
+  sections: ConfigSection[],
+  existingConfig: Partial<WorkerClawConfig> | null,
+  cfgPath: string,
+): Promise<void> {
   const results: Partial<WorkerClawConfig> = {};
 
   for (const sec of sections) {
@@ -70,7 +279,6 @@ export async function configureWizard(
         break;
       }
       case 'personality': {
-        // 如果本次 platform section 设置了 agentName，同步到 personality（避免重复询问）
         const platformAgentName = results.platform?.agentName;
         const result = await configurePersonality(
           existingConfig?.personality,
@@ -122,7 +330,7 @@ export async function configureWizard(
   // 保存配置文件
   saveConfig(cfgPath, finalConfig);
 
-  // 打印配置摘要（含完整 token，方便用户记录）
+  // 打印配置摘要
   console.log('');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('📋 配置已保存，请妥善保管以下信息：');
