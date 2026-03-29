@@ -35,8 +35,8 @@ mkdir -p "$DATA_DIR"
 # 检查是否已有配置
 if [ -f "$CONFIG_FILE" ]; then
   echo "📄 已有配置文件: $CONFIG_FILE"
-  BOT_NAME=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8')).personality?.name || '未知')" 2>/dev/null)
-  BOT_ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8')).platform?.botId || '未注册')" 2>/dev/null)
+  BOT_NAME=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('personality',{}).get('name','未知'))" 2>/dev/null)
+  BOT_ID=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('botId','未注册'))" 2>/dev/null)
   echo "   Bot 名称: $BOT_NAME"
   echo "   Bot ID: $BOT_ID"
   echo ""
@@ -189,35 +189,53 @@ echo ""
 echo "🔑 尝试自动注册 Bot..."
 AGENT_ID="agent-docker-$(date +%s)"
 
-REGISTER_RESPONSE=$(curl -s --max-time 15 "${api_url}/api/openclaw/register" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"agentId\": \"${AGENT_ID}\",
-    \"agentName\": \"${bot_name}\",
-    \"capabilities\": [\"text_reply\", \"qa\", \"search_summary\", \"writing\", \"translation\", \"image_gen\", \"code_dev\"],
-    \"autoPostTweet\": true
-  }")
+# 构建 JSON payload（单行，避免 curl -d 多行问题）
+REGISTER_PAYLOAD="{\"agentId\":\"${AGENT_ID}\",\"agentName\":\"${bot_name}\",\"capabilities\":[\"text_reply\",\"qa\",\"search_summary\",\"writing\",\"translation\",\"image_gen\",\"code_dev\"],\"autoPostTweet\":true}"
 
-# 判断注册是否成功（检查 .success == true 且 .botId 存在）
-if echo "$REGISTER_RESPONSE" | jq -e '.success == true and .botId' >/dev/null 2>&1; then
-  BOT_ID=$(echo "$REGISTER_RESPONSE" | jq -r '.botId')
-  TOKEN=$(echo "$REGISTER_RESPONSE" | jq -r '.token')
+# 优先使用 curl，回退到 wget
+if command -v curl &>/dev/null; then
+  REGISTER_RESPONSE=$(curl -s --max-time 15 "${api_url}/api/openclaw/register" \
+    -H "Content-Type: application/json" \
+    -d "$REGISTER_PAYLOAD" 2>&1)
+elif command -v wget &>/dev/null; then
+  REGISTER_RESPONSE=$(wget -qO- --timeout=15 \
+    --header="Content-Type: application/json" \
+    --post-data="$REGISTER_PAYLOAD" \
+    "${api_url}/api/openclaw/register" 2>&1)
+else
+  echo "⚠️ 需要 curl 或 wget 来注册 Bot"
+  REGISTER_RESPONSE=""
+fi
 
-  # 更新配置文件中的 botId 和 token
-  if command -v jq &>/dev/null; then
-    jq --arg bid "$BOT_ID" --arg tok "$TOKEN" \
-      '.platform.botId = $bid | .platform.token = $tok' \
-      "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-  else
-    # 没有 jq，用 node
-    node -e "
-      const fs = require('fs');
-      const c = JSON.parse(fs.readFileSync('$CONFIG_FILE','utf8'));
-      c.platform.botId = '$BOT_ID';
-      c.platform.token = '$TOKEN';
-      fs.writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2));
-    "
-  fi
+# 用 python3 解析 JSON（几乎所有服务器都有 python3）
+parse_json_field() {
+  local json="$1" field="$2"
+  python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('${field}',''))" 2>/dev/null <<< "$json"
+}
+
+# 更新配置文件中的 botId 和 token（纯 python3，不依赖 jq 或 node）
+update_config_with_bot() {
+  local bid="$1" tok="$2"
+  python3 -c "
+import json, sys
+cfg_path = '${CONFIG_FILE}'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c['platform']['botId'] = '${bid}'
+c['platform']['token'] = '${tok}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+" 2>/dev/null
+}
+
+# 判断注册是否成功
+REGISTER_SUCCESS=$(parse_json_field "$REGISTER_RESPONSE" "success")
+BOT_ID=$(parse_json_field "$REGISTER_RESPONSE" "botId")
+
+if [ "$REGISTER_SUCCESS" = "True" ] && [ -n "$BOT_ID" ]; then
+  TOKEN=$(parse_json_field "$REGISTER_RESPONSE" "token")
+
+  update_config_with_bot "$BOT_ID" "$TOKEN"
 
   echo "✅ Bot 注册成功!"
   echo "   Bot ID: $BOT_ID"
@@ -225,26 +243,18 @@ if echo "$REGISTER_RESPONSE" | jq -e '.success == true and .botId' >/dev/null 2>
   echo ""
 else
   echo "⚠️ 自动注册失败（服务器可能不可达）"
-  echo "   响应: ${REGISTER_RESPONSE:0:300}"
+  if [ -n "$REGISTER_RESPONSE" ]; then
+    echo "   响应: ${REGISTER_RESPONSE:0:300}"
+  else
+    echo "   未收到响应"
+  fi
   echo ""
   echo "   你可以稍后手动注册，或直接填写 Bot ID 和 Token:"
   read -p "   Bot ID: " manual_bot_id
   read -p "   Token: " manual_token
 
   if [ -n "$manual_bot_id" ] && [ -n "$manual_token" ]; then
-    if command -v jq &>/dev/null; then
-      jq --arg bid "$manual_bot_id" --arg tok "$manual_token" \
-        '.platform.botId = $bid | .platform.token = $tok' \
-        "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-    else
-      node -e "
-        const fs = require('fs');
-        const c = JSON.parse(fs.readFileSync('$CONFIG_FILE','utf8'));
-        c.platform.botId = '$manual_bot_id';
-        c.platform.token = '$manual_token';
-        fs.writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2));
-      " 2>/dev/null || echo "⚠️ 需要安装 jq 或 node 来更新配置"
-    fi
+    update_config_with_bot "$manual_bot_id" "$manual_token"
     echo "✅ 已手动配置 Bot"
   fi
 fi
