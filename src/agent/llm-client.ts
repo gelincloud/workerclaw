@@ -57,6 +57,11 @@ export class LLMClient {
             parameters: t.parameters,
           },
         }));
+
+        // 关键修复：显式设置 tool_choice 让模型知道应该调用工具
+        // "auto" - 让模型自主决定是否调用工具（默认值，但显式设置可避免某些模型的歧义行为）
+        // 某些模型（如 glm-4）在不设置 tool_choice 时，会将工具调用以文本形式输出而不是真正调用
+        body.tool_choice = 'auto';
       }
     }
 
