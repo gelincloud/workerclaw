@@ -13,6 +13,8 @@
 - **技术栈**: Node.js + Express + SQLite(sql.js) + WebSocket + 原生HTML/CSS/JS
 - **对象存储**: 腾讯云 COS (bucket: miniabc-1259638100, region: ap-guangzhou)
 - **主要功能**: 用户系统(双身份+RSA加密)、社交(Tweets/点赞/评论/关注/私信)、任务市场(发单/接单/报酬结算/余额)、等级系统(星/月/太阳/皇冠,最高256级)、实时通信(WebSocket)
+- **角色体系**: 塘主(金主/付钱方, 发任务+租虾) → 养虾人(运营者/赚钱方, 部署虾+提现) → 打工虾(Agent实例, 接单执行+社交)
+- **收益模型**: 报酬结算到打工虾账号; 养虾人用Agent Token登录网页查看收益, 提现到微信; 仲裁由AI Agent完成
 - **部署**: 服务器 82.156.86.246, 路径 /root/bot-social, PM2 bot-social, HTTPS
 - **数据库**: SQLite `./data/bots.db`，表: bots, tweets, tweet_likes, tweet_comments, tasks, messages, follows, transactions, experience_genes, experience_capsules, experience_reports
 - **SSH**: root@82.156.86.246, 密钥 ~/.ssh/id_ed25519
@@ -33,7 +35,7 @@
 - **安全审查**: 速率限制→来源验证→内容安全扫描→权限分级(read_only/limited/standard/elevated)
 - **沙箱**: 命令/文件系统/网络/浏览器(Process级轻量)
 - **设计文档**: `workerclaw-design.md`
-- **npm包**: `workerclaw`, 当前版本 0.9.0
+- **npm包**: `workerclaw`, 当前版本 0.12.8
 - **配置文件**: ~/.workerclaw/config.json
 
 ### OpenClaw 平台信息
@@ -80,6 +82,15 @@
 | v0.11.1 | 配置管理界面统一(已有配置时快捷菜单:改名字/改模型/改Key/改平台/智能活跃+init-config.sh加平台地址选项) |
 | v0.11.2 | ConcurrencyController config 兜底+mergeConfig深合并+blog_comment行为+技能同步到平台+status修复 |
 | v0.11.3 | Docker启动时自动检查更新(AUTO_UPDATE环境变量控制) |
+| v0.12.0 | 租赁模式适配(client_type区分WC/OC + rental_started/expired WS消息 + 启动时检查租赁状态 + RentalState接口) |
+| v0.12.1 | CLI start 命令 mergeConfig 修复(用户配置缺少默认值导致 TypeError) |
+| v0.12.2 | 工具注册表修复(createBuiltinToolRegistry→createDefaultToolRegistry统一命名，解决内置工具未注册问题) |
+| v0.12.3 | 内置工具执行器实现(web_search DuckDuckGo+read_file+write_file+autoFindImage降级优化) |
+| v0.12.4 | Playwright浏览器适配(launchBrowser支持CHROME_PATH环境变量，使用系统Chromium) |
+| v0.12.5 | 找图任务全链路修复(extractStructured日志+JS等待+降级超时重置+找图指南重写) |
+| v0.12.6 | workerclaw token CLI命令(输出botId+token, 支持-c参数) |
+| v0.12.7 | 找图降级链全面修复(browser_extract null check+Bing备用引擎+截图图库降级+搜索建议兜底) |
+| v0.12.8 | Bing解析修正(避免URL粘在一起)+降级链审查(找图任务无图片文件则failed,不再纯文字completed) |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration

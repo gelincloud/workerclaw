@@ -904,7 +904,7 @@ export class AgentEngine {
    * 导致 toolCallRounds=0 但任务需要实际操作（如找图、搜索）。
    *
    * 策略：
-   * - 找图任务 → 自动 browser_extract → browser_navigate(screenshot)
+   * - 找图任务 → browser_extract → 截图图库页面 → web_search → 搜索建议兜底
    * - 搜索任务 → 自动 web_search
    */
   private async tryAutoRemediation(
@@ -934,9 +934,25 @@ export class AgentEngine {
         // 自动找图降级方案
         const result = await this.autoFindImage(task, context);
         if (result) {
+          // 降级链审查：找图任务的结果必须包含图片文件（outputs 中有 image）
+          // 纯文字结果（链接、搜索建议）不算真正完成找图任务
+          if (result.outputs && result.outputs.some(o => o.type === 'image')) {
+            return {
+              ...result,
+              durationMs: Date.now() - startTime,
+            };
+          }
+          // 降级链只返回了文字，没有真正获取到图片文件 → 标记失败
+          this.logger.warn(`降级链审查未通过：找图任务没有产出图片文件 [${task.taskId}]`, {
+            hasOutputs: !!result.outputs,
+            outputCount: result.outputs?.length || 0,
+          });
           return {
-            ...result,
+            taskId: task.taskId,
+            status: 'failed',
+            error: `自动找图失败：尝试了多种方式但未能获取图片文件。${result.content?.slice(0, 100) || ''}`,
             durationMs: Date.now() - startTime,
+            qualityIssue: 'fallback_no_image_file',
           };
         }
       }
@@ -959,7 +975,13 @@ export class AgentEngine {
   }
 
   /**
-   * 自动找图：直接调用 browser_extract 和 browser_navigate 找图截图
+   * 自动找图：直接调用 browser_extract + 截图 找图
+   *
+   * 降级链：
+   * 1. browser_extract 从图库提取图片 URL → 下载/截图
+   * 2. 直接对图库搜索页截图（最可靠的降级方案）
+   * 3. web_search 搜索图片信息
+   * 4. 最终兜底：返回搜索建议文本（不再返回 null）
    */
   private async autoFindImage(
     task: Task,
@@ -1006,15 +1028,34 @@ export class AgentEngine {
       };
     }
 
-    // 浏览器不可用，降级：使用 web_search 搜索图片
-    this.logger.info(`浏览器不可用，使用 web_search 搜索图片 URL [${taskId}]`);
-    const searchResult = await this.autoSearchForImageUrls(searchQuery, context);
-    if (searchResult) {
-      return searchResult;
+    // 4. browser_extract 未获取图片 URL，直接对图库搜索页截图（最可靠的降级方案）
+    this.logger.info(`browser_extract 未获取图片 URL，尝试直接截图图库搜索页 [${taskId}]`);
+    const screenshotPath = await this.autoBrowserScreenshot(searchQuery, context);
+    if (screenshotPath) {
+      return {
+        taskId,
+        status: 'completed',
+        content: `为您找到了"${searchQuery}"相关的图片！已在图片搜索网站截图。\n\n请查看附件中的截图，图中包含多张相关图片，您可以从中选择喜欢的。`,
+        outputs: [{
+          type: 'image',
+          content: screenshotPath,
+          name: `${searchQuery}-search.jpg`,
+        }],
+        durationMs: 0,
+      };
     }
 
-    // 最终降级：返回搜索建议
-    this.logger.warn(`自动找图完全失败 [${taskId}]`);
+    // 5. 截图也失败，使用 web_search 搜索图片信息
+    this.logger.info(`截图不可用，使用 web_search 搜索图片信息 [${taskId}]`);
+    const searchResult = await this.autoSearchForImageUrls(searchQuery, context);
+    if (searchResult && searchResult.outputs && searchResult.outputs.some(o => o.type === 'image')) {
+      return searchResult;
+    }
+    // web_search 返回的纯文字结果不算真正完成找图任务，继续往下走兜底
+
+    // 6. 最终兜底：返回 null，让上层标记为 failed
+    // 不再返回 completed + 纯文字，因为找图任务必须交付图片文件
+    this.logger.warn(`自动找图完全失败，所有降级方式均未获取到图片文件 [${taskId}]`);
     return null;
   }
 
@@ -1197,36 +1238,85 @@ export class AgentEngine {
   }
 
   /**
-   * 自动调用 browser_navigate 截图
+   * 自动调用 browser_navigate 对图库搜索页截图
+   * 尝试多个图库源，并重置超时确保降级流程有足够时间
    */
   private async autoBrowserScreenshot(
     query: string,
     context: TaskExecutionContext,
   ): Promise<string | null> {
-    try {
-      const url = `https://unsplash.com/s/photos/${encodeURIComponent(query)}`;
-      const toolCall: ToolCall = {
-        id: `auto-screenshot-${Date.now()}`,
-        name: 'browser_navigate',
-        arguments: JSON.stringify({ url, screenshot: true }),
-      };
+    // 多个图库搜索页（Pixabay 最容易截图成功，不需要大量 JS 渲染）
+    const sources = [
+      `https://pixabay.com/images/search/${encodeURIComponent(query)}/`,
+      `https://unsplash.com/s/photos/${encodeURIComponent(query)}`,
+      `https://www.pexels.com/search/${encodeURIComponent(query)}/`,
+    ];
 
-      const result = await this.handleToolCall(toolCall, {
-        taskId: 'auto',
-        taskType: 'other',
-        title: query,
-        description: '',
-      } as Task, context);
+    for (const url of sources) {
+      try {
+        this.logger.debug(`尝试截图图库: ${url}`);
+        const toolCall: ToolCall = {
+          id: `auto-screenshot-${Date.now()}`,
+          name: 'browser_navigate',
+          arguments: JSON.stringify({ url, screenshot: true, extractText: false }),
+        };
 
-      if (result.success && result.content) {
-        // 从结果中提取截图文件路径
-        const pathMatch = result.content.match(/(?:截图已保存|📸|保存)[：:\s]*(\S+\.(?:jpg|jpeg|png|gif|webp))/i);
-        if (pathMatch && fs.existsSync(pathMatch[1])) {
-          return pathMatch[1];
+        // 重置超时，给降级截图足够的执行时间
+        const fallbackContext: TaskExecutionContext = {
+          ...context,
+          receivedAt: Date.now(),
+        };
+
+        const result = await this.handleToolCall(toolCall, {
+          taskId: context.task.taskId,
+          taskType: 'other',
+          title: query,
+          description: '',
+        } as Task, fallbackContext);
+
+        if (result.success && result.content) {
+          // 从结果中提取截图文件路径 — 多种格式兼容
+          const pathPatterns = [
+            /(?:截图已保存|📸.*?保存)[：:]\s*(\S+\.(?:jpg|jpeg|png|gif|webp))/i,
+            /(?:文件已保存|已写入|已保存到?|saved)[^\n]*(\/?[^\s"']+\.(?:jpg|jpeg|png|gif|webp))/i,
+            /(\S+\/screenshot-\d+\.(?:jpg|jpeg|png|gif|webp))/i,
+          ];
+          for (const pattern of pathPatterns) {
+            const pathMatch = result.content.match(pattern);
+            if (pathMatch) {
+              const filePath = pathMatch[1];
+              if (fs.existsSync(filePath)) {
+                this.logger.info(`截图成功: ${filePath}`);
+                return filePath;
+              }
+            }
+          }
+
+          // 最后手段：检查默认截图目录下最新的截图文件
+          const defaultDir = './data/sandbox';
+          if (fs.existsSync(defaultDir)) {
+            const files = fs.readdirSync(defaultDir)
+              .filter(f => f.startsWith('screenshot-') && /\.(jpg|jpeg|png)$/i.test(f))
+              .sort((a, b) => {
+                const ta = parseInt(a.match(/\d+/)?.[0] || '0');
+                const tb = parseInt(b.match(/\d+/)?.[0] || '0');
+                return tb - ta; // 最新优先
+              });
+            // 只接受最近 10 秒内的截图文件（避免拿到旧截图）
+            const now = Date.now();
+            for (const f of files.slice(0, 3)) {
+              const filePath = path.join(defaultDir, f);
+              const stat = fs.statSync(filePath);
+              if (now - stat.mtimeMs < 15000) {
+                this.logger.info(`找到最近截图文件: ${filePath}`);
+                return filePath;
+              }
+            }
+          }
         }
+      } catch (err) {
+        this.logger.debug(`图库截图失败: ${url}`, { error: (err as Error).message });
       }
-    } catch (err) {
-      this.logger.debug(`browser_navigate 截图失败`, { error: (err as Error).message });
     }
 
     return null;
@@ -1243,20 +1333,34 @@ export class AgentEngine {
       const toolCall: ToolCall = {
         id: `auto-img-screenshot-${Date.now()}`,
         name: 'browser_navigate',
-        arguments: JSON.stringify({ url: imageUrl, screenshot: true }),
+        arguments: JSON.stringify({ url: imageUrl, screenshot: true, extractText: false }),
+      };
+
+      // 重置超时
+      const fallbackContext: TaskExecutionContext = {
+        ...context,
+        receivedAt: Date.now(),
       };
 
       const result = await this.handleToolCall(toolCall, {
-        taskId: 'auto',
+        taskId: context.task.taskId,
         taskType: 'other',
         title: '截图',
         description: '',
-      } as Task, context);
+      } as Task, fallbackContext);
 
       if (result.success && result.content) {
-        const pathMatch = result.content.match(/(?:截图已保存|📸|保存)[：:\s]*(\S+\.(?:jpg|jpeg|png|gif|webp))/i);
-        if (pathMatch && fs.existsSync(pathMatch[1])) {
-          return pathMatch[1];
+        // 多种正则模式匹配截图路径
+        const pathPatterns = [
+          /(?:截图已保存|📸.*?保存)[：:]\s*(\S+\.(?:jpg|jpeg|png|gif|webp))/i,
+          /(?:文件已保存|已写入|已保存到?|saved)[^\n]*(\/?[^\s"']+\.(?:jpg|jpeg|png|gif|webp))/i,
+          /(\S+\/screenshot-\d+\.(?:jpg|jpeg|png|gif|webp))/i,
+        ];
+        for (const pattern of pathPatterns) {
+          const pathMatch = result.content.match(pattern);
+          if (pathMatch && fs.existsSync(pathMatch[1])) {
+            return pathMatch[1];
+          }
         }
       }
     } catch (err) {

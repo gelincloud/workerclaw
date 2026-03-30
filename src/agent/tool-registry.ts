@@ -127,7 +127,7 @@ export class ToolRegistry {
 const logger = createLogger('BuiltinTools');
 
 /**
- * web_search 执行器 — 使用 DuckDuckGo Lite 搜索
+ * web_search 执行器 — DuckDuckGo Lite 主引擎 + Bing 备用引擎
  */
 async function executeWebSearch(params: any, context: any): Promise<ToolResult> {
   const { query, maxResults = 5 } = params;
@@ -137,90 +137,191 @@ async function executeWebSearch(params: any, context: any): Promise<ToolResult> 
     return { toolCallId, success: false, content: '缺少搜索关键词 (query)', error: 'missing_query' };
   }
 
-  try {
-    // 使用 DuckDuckGo Lite HTML 版本（免费，无需 API key）
-    const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; WorkerClaw/0.12)',
-        'Accept': 'text/html',
-      },
-      signal: AbortSignal.timeout(Math.min(context?.remainingMs || 30000, 30000)),
-    });
+  const timeoutMs = Math.min(context?.remainingMs || 30000, 30000);
 
-    if (!response.ok) {
-      return { toolCallId, success: false, content: `搜索请求失败: HTTP ${response.status}`, error: 'http_error' };
+  // 引擎列表：主引擎 + 备用引擎
+  const engines = [
+    { name: 'DuckDuckGo', fn: () => searchDuckDuckGo(query, maxResults, timeoutMs) },
+    { name: 'Bing', fn: () => searchBing(query, maxResults, timeoutMs) },
+  ];
+
+  for (const engine of engines) {
+    try {
+      logger.debug(`尝试 ${engine.name} 搜索`, { query });
+      const results = await engine.fn();
+      if (results.length > 0) {
+        const formatted = results.map((r, i) =>
+          `${i + 1}. ${r.title}\n   URL: ${r.url}\n   ${r.snippet ? `摘要: ${r.snippet}\n` : ''}`
+        ).join('\n');
+
+        return {
+          toolCallId,
+          success: true,
+          content: `搜索 "${query}" 的结果（${engine.name}，共 ${results.length} 条）：\n\n${formatted}`,
+        };
+      }
+      logger.debug(`${engine.name} 无结果，尝试下一个引擎`);
+    } catch (err) {
+      logger.debug(`${engine.name} 搜索失败`, { error: (err as Error).message });
     }
+  }
 
-    const html = await response.text();
+  return {
+    toolCallId,
+    success: false,
+    content: `所有搜索引擎均不可用，请稍后重试或使用 browser_extract 工具直接访问搜索引擎。`,
+    error: 'all_engines_failed',
+  };
+}
 
-    // 解析 DuckDuckGo Lite HTML 结果
-    const results: Array<{ title: string; url: string; snippet: string }> = [];
-    const trRegex = /<tr[^>]*class="result-link"[^>]*>[\s\S]*?<\/tr>/gi;
-    let match: RegExpExecArray | null;
+/**
+ * DuckDuckGo Lite 搜索
+ */
+async function searchDuckDuckGo(query: string, maxResults: number, timeoutMs: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
+  const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
 
-    while ((match = trRegex.exec(html)) !== null && results.length < maxResults) {
-      const tr = match[0];
+  if (!response.ok) {
+    throw new Error(`DuckDuckGo HTTP ${response.status}`);
+  }
 
-      // 提取链接
-      const hrefMatch = tr.match(/href="([^"]+)"/);
-      // 提取标题
-      const titleMatch = tr.match(/class="result-link"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
-      // 提取摘要
-      const snippetMatch = tr.match(/class="result-snippet"[^>]*>([\s\S]*?)<\/td>/i);
+  const html = await response.text();
+  const results: Array<{ title: string; url: string; snippet: string }> = [];
 
-      if (hrefMatch && titleMatch) {
-        // DuckDuckGo Lite 的链接是跳转链接，提取实际 URL
-        const actualUrl = hrefMatch[1].replace(/^\/l\//, '').replace(/uddg=/, '');
+  // 主解析：result-link class
+  const trRegex = /<tr[^>]*class="result-link"[^>]*>[\s\S]*?<\/tr>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = trRegex.exec(html)) !== null && results.length < maxResults) {
+    const tr = match[0];
+    const hrefMatch = tr.match(/href="([^"]+)"/);
+    const titleMatch = tr.match(/class="result-link"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+    const snippetMatch = tr.match(/class="result-snippet"[^>]*>([\s\S]*?)<\/td>/i);
+
+    if (hrefMatch && titleMatch) {
+      const actualUrl = decodeURIComponent(
+        hrefMatch[1].split('&').find(p => p.startsWith('uddg='))?.slice(5) || hrefMatch[1]
+      );
+      results.push({
+        title: titleMatch[1].replace(/<[^>]*>/g, '').trim(),
+        url: actualUrl.startsWith('http') ? actualUrl : `https://duckduckgo.com${actualUrl}`,
+        snippet: snippetMatch ? snippetMatch[1].replace(/<[^>]*>/g, '').trim() : '',
+      });
+    }
+  }
+
+  // 备用解析：更宽松的正则
+  if (results.length === 0) {
+    const linkRegex = /<a[^>]+class="result-link"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    let linkMatch: RegExpExecArray | null;
+    while ((linkMatch = linkRegex.exec(html)) !== null && results.length < maxResults) {
+      const linkHref = linkMatch[1];
+      const linkText = linkMatch[2].replace(/<[^>]*>/g, '').trim();
+      if (linkText && linkHref) {
+        const actualUrl = decodeURIComponent(
+          linkHref.split('&').find(p => p.startsWith('uddg='))?.slice(5) || linkHref
+        );
         results.push({
-          title: titleMatch[1].replace(/<[^>]*>/g, '').trim(),
-          url: decodeURIComponent(actualUrl.split('&').find(p => p.startsWith('uddg='))?.slice(5) || hrefMatch[1]),
-          snippet: snippetMatch ? snippetMatch[1].replace(/<[^>]*>/g, '').trim() : '',
+          title: linkText,
+          url: actualUrl.startsWith('http') ? actualUrl : `https://duckduckgo.com${actualUrl}`,
+          snippet: '',
         });
       }
     }
+  }
 
-    if (results.length === 0) {
-      // 备用解析：尝试更宽松的正则
-      const linkRegex = /<a[^>]+class="result-link"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-      let linkMatch: RegExpExecArray | null;
-      while ((linkMatch = linkRegex.exec(html)) !== null && results.length < maxResults) {
-        const linkHref = linkMatch[1];
-        const linkText = linkMatch[2].replace(/<[^>]*>/g, '').trim();
-        if (linkText && linkHref) {
-          results.push({
-            title: linkText,
-            url: linkHref.startsWith('http') ? linkHref : `https://duckduckgo.com${linkHref}`,
-            snippet: '',
-          });
+  // 第三层备用：直接从 HTML 提取所有搜索结果链接
+  if (results.length === 0) {
+    const htmlRegex = /<a[^>]+href="(\/l\/\?uddg=[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    let htmlMatch: RegExpExecArray | null;
+    while ((htmlMatch = htmlRegex.exec(html)) !== null && results.length < maxResults) {
+      const linkHref = htmlMatch[1];
+      const linkText = htmlMatch[2].replace(/<[^>]*>/g, '').trim();
+      if (linkText) {
+        const actualUrl = decodeURIComponent(
+          linkHref.split('&').find(p => p.startsWith('uddg='))?.slice(5) || ''
+        );
+        if (actualUrl) {
+          results.push({ title: linkText, url: actualUrl, snippet: '' });
         }
       }
     }
-
-    if (results.length === 0) {
-      return {
-        toolCallId,
-        success: true,
-        content: `搜索 "${query}" 未找到直接结果。搜索服务可能暂时不可用，请尝试使用浏览器工具直接访问搜索引擎。`,
-      };
-    }
-
-    const formatted = results.map((r, i) =>
-      `${i + 1}. ${r.title}\n   URL: ${r.url}\n   ${r.snippet ? `摘要: ${r.snippet}\n` : ''}`
-    ).join('\n');
-
-    return {
-      toolCallId,
-      success: true,
-      content: `搜索 "${query}" 的结果（共 ${results.length} 条）：\n\n${formatted}`,
-    };
-  } catch (err) {
-    const error = err as Error;
-    if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-      return { toolCallId, success: false, content: `搜索超时: ${query}`, error: 'timeout' };
-    }
-    return { toolCallId, success: false, content: `搜索出错: ${error.message}`, error: error.message };
   }
+
+  return results;
+}
+
+/**
+ * Bing 搜索（备用引擎）
+ */
+async function searchBing(query: string, maxResults: number, timeoutMs: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
+  const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${maxResults}`;
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Bing HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const results: Array<{ title: string; url: string; snippet: string }> = [];
+
+  // Bing 搜索结果在 <li class="b_algo"> 中
+  const algoRegex = /<li[^>]*class="b_algo"[^>]*>([\s\S]*?)<\/li>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = algoRegex.exec(html)) !== null && results.length < maxResults) {
+    const block = match[1];
+
+    // 提取链接 — 只取 href，不贪婪匹配链接文本
+    const hrefMatch = block.match(/<a[^>]+href="([^"]+)"[^>]*>/i);
+    // 提取标题 — 优先从 <h2><a>...</a></h2> 结构中提取，且只取最深层的文本节点
+    // Bing 结构: <h2><a href="...">标题文本</a></h2>，可能还有 cite 显示域名
+    let title = '';
+    const h2Match = block.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
+    if (h2Match) {
+      const h2Content = h2Match[1];
+      // 提取 <a> 标签内的纯文本（排除 cite 等子元素）
+      const aMatch = h2Content.match(/<a[^>]*>([\s\S]*?)<\/a>/i);
+      if (aMatch) {
+        title = aMatch[1]
+          .replace(/<[^>]*>/g, '')  // 移除所有内部标签
+          .replace(/\s+/g, ' ')      // 合并空白
+          .trim();
+      }
+    }
+    // 如果 h2 提取失败，回退到直接从 <a> 提取（只取第一行文本）
+    if (!title && hrefMatch) {
+      const aContent = block.match(/<a[^>]+href="[^"]*"[^>]*>([\s\S]*?)<\/a>/i);
+      if (aContent) {
+        title = aContent[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      }
+    }
+
+    // 提取摘要
+    const snippetMatch = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i) || block.match(/class="b_caption"[^>]*>([\s\S]*?)<\/div>/i);
+    const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]*>/g, '').trim().slice(0, 300) : '';
+
+    const linkUrl = hrefMatch ? hrefMatch[1] : '';
+    if (title && linkUrl && title.length < 200 && !linkUrl.startsWith('javascript:')) {
+      results.push({ title, url: linkUrl, snippet });
+    }
+  }
+
+  return results;
 }
 
 /**

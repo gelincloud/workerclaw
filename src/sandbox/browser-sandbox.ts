@@ -338,40 +338,63 @@ export class BrowserSandbox {
       } catch {}
 
       // 提取结构化数据 — 字符串形式避免 DOM 类型问题
+      // 注意：SPA 页面可能在 networkidle 后仍未完全渲染，需要 try-catch
       const extractFn = `() => {
-        const title = document.title || '';
-        const body = document.body ? document.body.innerText || '' : '';
-        const anchors = [...document.querySelectorAll('a[href]')]
-          .slice(0, 50)
-          .map(a => ({ text: (a.textContent || '').trim().slice(0, 100), href: a.href }))
-          .filter(l => l.text && l.href && !l.href.startsWith('javascript:'));
-        const imgs = [...document.querySelectorAll('img')]
-          .slice(0, 20)
-          .map(img => ({ alt: (img.alt || '').slice(0, 100), src: img.src || '' }))
-          .filter(i => i.src);
-        const metas = {};
-        for (const meta of document.querySelectorAll('meta[name], meta[property]')) {
-          const n = meta.getAttribute('name') || meta.getAttribute('property') || '';
-          const c = meta.getAttribute('content') || '';
-          if (n && c) metas[n] = c.slice(0, 200);
+        try {
+          const title = document.title || '';
+          const body = document.body ? document.body.innerText || '' : '';
+          const anchors = [...document.querySelectorAll('a[href]')]
+            .slice(0, 50)
+            .map(a => ({ text: (a.textContent || '').trim().slice(0, 100), href: a.href }))
+            .filter(l => l.text && l.href && !l.href.startsWith('javascript:'));
+          const imgs = [...document.querySelectorAll('img')]
+            .slice(0, 20)
+            .map(img => {
+              // 优先使用 srcset 中的高质量图片 URL
+              let src = img.src || '';
+              if (img.srcset) {
+                const sources = img.srcset.split(',').map(s => s.trim().split(/\s+/)[0]);
+                if (sources.length > 0) src = sources[sources.length - 1];
+              }
+              return { alt: (img.alt || '').slice(0, 100), src };
+            })
+            .filter(i => i.src && !i.src.startsWith('data:'));
+          const metas = {};
+          for (const meta of document.querySelectorAll('meta[name], meta[property]')) {
+            const n = meta.getAttribute('name') || meta.getAttribute('property') || '';
+            const c = meta.getAttribute('content') || '';
+            if (n && c) metas[n] = c.slice(0, 200);
+          }
+          return { title, text: body.slice(0, 50000), links: anchors, images: imgs, metas };
+        } catch (e) {
+          return null;
         }
-        return { title, text: body.slice(0, 50000), links: anchors, images: imgs, metas };
       }`;
 
-      const data = await page.evaluate(extractFn);
+      const data = await page.evaluate(extractFn) || {};
+
+      // 空页面保护
+      if (!data || (!data.text && data.links?.length === 0 && data.images?.length === 0)) {
+        this.logger.debug(`extractStructured: 页面内容为空，可能是 SPA 未渲染完成`, { url });
+        return {
+          success: false, url: page.url(), title: data?.title || '', text: '',
+          links: [], images: [], meta: {},
+          error: '页面内容为空（可能是 SPA 未渲染完成）',
+        };
+      }
 
       // 截断文本
       const maxChars = this.config.maxPageSizeKB * 512;
-      const text = data.text.length > maxChars ? data.text.slice(0, maxChars) + '\n\n[...已截断]' : data.text;
+      const text = (data.text || '').length > maxChars ? data.text.slice(0, maxChars) + '\n\n[...已截断]' : (data.text || '');
 
       return {
         success: true,
         url: page.url(),
-        title: data.title,
+        title: data.title || '',
         text,
-        links: data.links,
-        images: data.images,
-        meta: data.metas,
+        links: data.links || [],
+        images: data.images || [],
+        meta: data.metas || {},
       };
 
     } catch (err) {
