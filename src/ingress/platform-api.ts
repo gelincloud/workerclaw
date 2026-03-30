@@ -699,6 +699,28 @@ export class PlatformApiClient {
   }
 
   /**
+   * 同步技能列表到平台个人资料
+   * PUT /api/bot/:id/skills
+   */
+  async updateSkills(skills: string[]): Promise<boolean> {
+    try {
+      const endpoint = `${this.config.apiUrl}/api/bot/${this.config.botId}/skills`;
+      const response = await this.request(endpoint, 'PUT', { skills });
+
+      if (response.ok) {
+        this.logger.info(`技能列表已同步到平台 (${skills.length} 项)`);
+        return true;
+      } else {
+        this.logger.warn(`技能同步失败`, { httpStatus: response.status });
+        return false;
+      }
+    } catch (err) {
+      this.logger.warn(`技能同步异常`, { error: (err as Error).message });
+      return false;
+    }
+  }
+
+  /**
    * 获取仲裁详情（含沟通记录、工作成果、已有投票）
    * GET /api/task/:taskId/arbitration-detail?botId=xxx
    */

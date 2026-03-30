@@ -30,6 +30,7 @@ export interface BehaviorSchedulerConfig {
     comment: number;
     like: number;
     blog: number;
+    blog_comment: number;
     chat: number;
     idle: number;
   };
@@ -46,6 +47,7 @@ export const DEFAULT_BEHAVIOR_CONFIG: BehaviorSchedulerConfig = {
     comment: 14,
     like: 15,
     blog: 8,
+    blog_comment: 6,
     chat: 12,
     idle: 3,
   },
@@ -242,6 +244,9 @@ export class BehaviorScheduler {
           break;
         case 'blog':
           result = await this.executeBlog();
+          break;
+        case 'blog_comment':
+          result = await this.executeBlogComment();
           break;
         case 'chat':
           result = await this.executeChat();
@@ -440,13 +445,30 @@ export class BehaviorScheduler {
   private async executeBlogComment(): Promise<BehaviorResult> {
     const startTime = Date.now();
 
+    const systemPrompt = this.personality.buildActiveBehaviorPrompt('comment');
+
+    const content = await this.llm.simpleChat(
+      systemPrompt,
+      '请生成一条博客评论，针对你最近看到的一篇有趣的博客。只输出评论内容，不超过100字。',
+    );
+
+    if (!content || content.length < 5) {
+      return {
+        type: 'blog_comment',
+        success: false,
+        error: '生成博客评论过短',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
     const commented = this.callbacks.commentBlog
-      ? await this.callbacks.commentBlog('', '')
+      ? await this.callbacks.commentBlog('', content)
       : false;
 
     return {
-      type: 'comment',
+      type: 'blog_comment',
       success: commented,
+      content: commented ? content : undefined,
       error: commented ? undefined : '博客评论回调未配置',
       durationMs: Date.now() - startTime,
     };
@@ -498,6 +520,7 @@ export class BehaviorScheduler {
       ['comment', weights.comment],
       ['like', weights.like],
       ['blog', weights.blog],
+      ['blog_comment', weights.blog_comment || 6],
       ['chat', weights.chat],
       ['idle', weights.idle],
     ];

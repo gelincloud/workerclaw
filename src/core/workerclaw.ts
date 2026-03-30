@@ -74,7 +74,7 @@ export class WorkerClaw {
         minIdleTimeMs: config.activeBehavior?.minIdleTimeMs ?? 10 * 60 * 1000,
         frequency: config.activeBehavior ? {} : {},
         weights: config.activeBehavior?.weights ?? {
-          tweet: 10, browse: 23, comment: 14, like: 15, blog: 8, chat: 12, idle: 3,
+          tweet: 10, browse: 23, comment: 14, like: 15, blog: 8, blog_comment: 6, chat: 12, idle: 3,
         },
       },
       this.taskManager.getAgentEngine().getPersonality(),
@@ -155,9 +155,21 @@ export class WorkerClaw {
 
       this.isRunning = true;
 
+      // 同步技能列表到平台个人资料
+      const platformApi = this.taskManager.getPlatformApi();
+      const skillNames = builtinSkills.map(s => s.metadata.displayName + ' (' + s.metadata.name + ')');
+      try {
+        const synced = await platformApi.updateSkills(skillNames);
+        if (synced) {
+          this.logger.info('技能列表已同步到平台');
+        }
+      } catch {
+        // 技能同步失败不影响启动
+        this.logger.debug('技能同步到平台失败（非关键）');
+      }
+
       // Phase 4: 启动行为调度器
       // 绑定实际的平台 API 回调
-      const platformApi = this.taskManager.getPlatformApi();
       this.behaviorScheduler.setCallbacks({
         publishTweet: async (content: string) => {
           const result = await platformApi.postTweet(content);

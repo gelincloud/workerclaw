@@ -223,7 +223,7 @@ const main = defineCommand({
           console.log(`  平台: ${config.platform?.botId || '未配置'}`);
           console.log(`  LLM: ${config.llm?.provider || '未配置'} / ${config.llm?.model || '未知'}`);
           console.log(`  安全级别: ${config.security?.contentScan?.promptInjection?.enabled ? '已启用' : '未启用'} 内容扫描`);
-          console.log(`  智能活跃: ${config.activeBehavior?.enabled ? '已启用' : '未启用'}`);
+          console.log(`  智能活跃: ${(config.activeBehavior?.enabled ?? true) ? '已启用' : '未启用'}`);
 
           // 技能状态
           const { getBuiltinSkills } = await import('../skills/builtin/index.js');
