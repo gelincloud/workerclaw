@@ -354,7 +354,36 @@ export function mergeConfig(
     ...base,
     ...overrides,
     security: { ...DEFAULT_CONFIG.security, ...base.security, ...overrides.security },
-    task: { ...DEFAULT_CONFIG.task, ...base.task, ...overrides.task },
+    task: {
+      ...DEFAULT_CONFIG.task,
+      ...base.task,
+      ...overrides.task,
+      concurrency: {
+        ...DEFAULT_CONFIG.task.concurrency,
+        ...base.task?.concurrency,
+        ...overrides.task?.concurrency,
+        priority: {
+          ...DEFAULT_CONFIG.task.concurrency.priority,
+          ...base.task?.concurrency?.priority,
+          ...overrides.task?.concurrency?.priority,
+        },
+      },
+      evaluation: {
+        ...DEFAULT_CONFIG.task.evaluation,
+        ...base.task?.evaluation,
+        ...overrides.task?.evaluation,
+      },
+      pricing: {
+        ...DEFAULT_CONFIG.task.pricing,
+        ...base.task?.pricing,
+        ...overrides.task?.pricing,
+      },
+      timeout: {
+        ...DEFAULT_CONFIG.task.timeout,
+        ...base.task?.timeout,
+        ...overrides.task?.timeout,
+      },
+    },
     personality: { ...DEFAULT_CONFIG.personality, ...base.personality, ...overrides.personality },
     platform: { ...((base as any).platform || {}), ...((overrides as any).platform || {}) } as PlatformConfig,
     llm: { ...((base as any).llm || {}), ...((overrides as any).llm || {}) } as LLMConfig,

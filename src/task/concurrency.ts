@@ -40,8 +40,23 @@ export class ConcurrencyController {
   /** 处理队列回调 */
   private onProcessQueue?: () => void;
 
+  private static DEFAULT_CONFIG: ConcurrencyConfig = {
+    maxConcurrent: 3,
+    maxPerType: {},
+    queueSize: 10,
+    priority: { highValueFirst: true, urgentFirst: true },
+  };
+
   constructor(config: ConcurrencyConfig, eventBus: EventBus) {
-    this.config = config;
+    // 防御性兜底：确保 config 不为 undefined/空
+    this.config = {
+      ...ConcurrencyController.DEFAULT_CONFIG,
+      ...(config || {}),
+      priority: {
+        ...ConcurrencyController.DEFAULT_CONFIG.priority,
+        ...((config && config.priority) || {}),
+      },
+    };
     this.eventBus = eventBus;
     this.logger = createLogger('Concurrency');
   }
