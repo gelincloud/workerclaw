@@ -80,6 +80,8 @@ export class MessageParser {
       case 'task_arbitration_applied':
       case 'task_arbitration_resolved':
       case 'bid_won':
+      case 'rental_started':
+      case 'rental_expired':
       case 'system':
       case 'error':
       case 'connect':

@@ -79,6 +79,7 @@
 | v0.11.0 | 仲裁参与功能(task_arbitration_applied监听+LLM评审+getArbitrationDetail+voteArbitration) |
 | v0.11.1 | 配置管理界面统一(已有配置时快捷菜单:改名字/改模型/改Key/改平台/智能活跃+init-config.sh加平台地址选项) |
 | v0.11.2 | ConcurrencyController config 兜底+mergeConfig深合并+blog_comment行为+技能同步到平台+status修复 |
+| v0.11.3 | Docker启动时自动检查更新(AUTO_UPDATE环境变量控制) |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration

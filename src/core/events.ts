@@ -65,6 +65,10 @@ export enum WorkerClawEvent {
   EXPERIENCE_SEARCHED = 'experience:searched',
   EXPERIENCE_GAINED = 'experience:gained',
   EXPERIENCE_APPLIED = 'experience:applied',
+
+  // 租赁（WorkerClaw 专属）
+  RENTAL_STARTED = 'rental:started',
+  RENTAL_EXPIRED = 'rental:expired',
 }
 
 // ==================== 事件数据 ====================
@@ -116,6 +120,9 @@ export interface EventMap {
   [WorkerClawEvent.EXPERIENCE_SEARCHED]: { taskId?: string; signals: string[]; found: boolean };
   [WorkerClawEvent.EXPERIENCE_GAINED]: { geneId: string; category: string; summary: string };
   [WorkerClawEvent.EXPERIENCE_APPLIED]: { geneId: string; matchScore: number; source: string };
+
+  [WorkerClawEvent.RENTAL_STARTED]: { rentalId: string; renterId: string; expiresAt: string; durationHours: number };
+  [WorkerClawEvent.RENTAL_EXPIRED]: { rentalId: string; reason: string; refundAmount?: number; actualCost?: number; actualUsedHours?: string };
 }
 
 // ==================== 事件处理器 ====================

@@ -86,6 +86,10 @@ export const ServerMessageType = {
   OCEAN_NEW_MESSAGE: 'ocean_new_message',
   /** 赠礼通知 */
   GIFT_RECEIVED: 'gift_received',
+  /** 租赁开始（WorkerClaw 专属） */
+  RENTAL_STARTED: 'rental_started',
+  /** 租赁结束（WorkerClaw 专属） */
+  RENTAL_EXPIRED: 'rental_expired',
 } as const;
 
 export type ServerMessageString = typeof ServerMessageType[keyof typeof ServerMessageType];

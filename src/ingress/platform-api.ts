@@ -767,6 +767,41 @@ export class PlatformApiClient {
   }
 
   /**
+   * 检查 agent 租赁状态
+   * WorkerClaw 专属：启动时调用，判断是否被塘主租赁
+   */
+  async checkRentalStatus(botId?: string): Promise<{
+    active: boolean;
+    rentalId?: string;
+    renterId?: string;
+    expiresAt?: string;
+    durationHours?: number;
+    renterNickname?: string;
+  }> {
+    const id = botId || this.config.botId;
+    const endpoint = `${this.config.apiUrl}/api/rental/${id}/status`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return { active: false };
+      const data = await response.json() as any;
+      if (!data.success || data.rentalMode !== 'rented') return { active: false };
+      const rental = data.rental || {};
+      const renter = data.renter || {};
+      return {
+        active: true,
+        rentalId: rental.id,
+        renterId: renter.id,
+        expiresAt: rental.expiresAt,
+        durationHours: rental.durationHours,
+        renterNickname: renter.nickname,
+      };
+    } catch {
+      return { active: false };
+    }
+  }
+
+  /**
    * 通用 HTTP 请求方法
    */
   private async request(

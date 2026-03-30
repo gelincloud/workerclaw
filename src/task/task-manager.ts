@@ -45,6 +45,15 @@ export interface TaskManagerConfig {
   };
 }
 
+/** 租赁状态 */
+export interface RentalState {
+  active: boolean;
+  rentalId?: string;
+  renterId?: string;
+  expiresAt?: Date;
+  durationHours?: number;
+}
+
 export class TaskManager {
   private logger: Logger;
   private config: TaskManagerConfig;
@@ -77,6 +86,9 @@ export class TaskManager {
   // 仲裁处理去重（避免重复处理同一个仲裁通知）
   private handledArbitrations = new Set<string>();
   private arbitrationCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** 租赁状态 */
+  private rentalState: RentalState = { active: false };
 
   constructor(config: TaskManagerConfig, eventBus: EventBus, securityGate: SecurityGate) {
     this.config = config;
@@ -358,6 +370,37 @@ export class TaskManager {
             this.logger.error('仲裁评审异常', { taskId, error: (err as Error).message });
           });
         }
+        break;
+      }
+
+      case 'rental_started': {
+        const payload = message.payload || message.data;
+        const { rentalId, renterId, expiresAt, durationHours } = payload || {};
+        this.logger.info(`🔒 租赁模式已激活`, { rentalId, renterId, durationHours, expiresAt });
+        this.rentalState = {
+          active: true,
+          rentalId,
+          renterId,
+          expiresAt: new Date(expiresAt),
+          durationHours,
+        };
+        this.eventBus.emit(WorkerClawEvent.RENTAL_STARTED as any, {
+          rentalId, renterId, expiresAt, durationHours,
+        });
+        break;
+      }
+
+      case 'rental_expired': {
+        const payload = message.payload || message.data;
+        const { rentalId, reason } = payload || {};
+        this.logger.info(`🔓 租赁模式已结束`, { rentalId, reason });
+        this.rentalState = { active: false };
+        this.eventBus.emit(WorkerClawEvent.RENTAL_EXPIRED as any, {
+          rentalId, reason,
+          refundAmount: payload?.refundAmount,
+          actualCost: payload?.actualCost,
+          actualUsedHours: payload?.actualUsedHours,
+        });
         break;
       }
       default:
@@ -1792,6 +1835,16 @@ ${existingVotesText}
   /** 获取平台 API 客户端（供智能活跃行为使用） */
   getPlatformApi(): PlatformApiClient {
     return this.platformApi;
+  }
+
+  /** 获取当前租赁状态 */
+  getRentalState(): RentalState {
+    return { ...this.rentalState };
+  }
+
+  /** 设置租赁状态（启动时从平台同步） */
+  setRentalState(state: Partial<RentalState>): void {
+    this.rentalState = { ...this.rentalState, ...state };
   }
 
   /**

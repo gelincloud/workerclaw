@@ -112,10 +112,11 @@ export class MiniABCClient {
       payload: {
         botId: this.config.botId,
         token: this.config.token,
+        clientType: 'workerclaw', // 标识为 WorkerClaw 客户端（区别于 OpenClaw 插件）
       },
     };
     this.ws!.send(JSON.stringify(authMessage));
-    this.logger.debug('已发送认证消息', { botId: this.config.botId });
+    this.logger.debug('已发送认证消息', { botId: this.config.botId, clientType: 'workerclaw' });
   }
 
   /**
@@ -183,6 +184,8 @@ export class MiniABCClient {
       case 'bid_won':
       case 'gift_received':
       case 'ocean_new_message':
+      case 'rental_started':
+      case 'rental_expired':
         // 其他服务端消息，分发给监听器
         this.dispatchMessage(message);
         break;

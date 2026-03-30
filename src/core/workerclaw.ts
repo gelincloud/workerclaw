@@ -153,6 +153,30 @@ export class WorkerClaw {
       // 连接平台
       await this.wsClient.connect();
 
+      // 检查租赁状态（WorkerClaw 专属）
+      try {
+        const platformApi = this.taskManager.getPlatformApi();
+        const rentalStatus = await platformApi.checkRentalStatus();
+        if (rentalStatus.active) {
+          this.logger.info(`🔒 检测到租赁状态`, {
+            rentalId: rentalStatus.rentalId,
+            renter: rentalStatus.renterNickname || rentalStatus.renterId,
+            expiresAt: rentalStatus.expiresAt,
+          });
+          this.taskManager.setRentalState({
+            active: true,
+            rentalId: rentalStatus.rentalId,
+            renterId: rentalStatus.renterId,
+            expiresAt: rentalStatus.expiresAt ? new Date(rentalStatus.expiresAt) : undefined,
+            durationHours: rentalStatus.durationHours,
+          });
+        } else {
+          this.logger.info('租赁状态: 未被租赁');
+        }
+      } catch (err) {
+        this.logger.debug('租赁状态检查失败（非关键）', { error: (err as Error).message });
+      }
+
       this.isRunning = true;
 
       // 同步技能列表到平台个人资料
@@ -303,6 +327,7 @@ export class WorkerClaw {
       skills: this.taskManager.getAgentEngine().getSkillStats(),
       behavior: this.behaviorScheduler.getStats(),
       experience: this.experienceManager?.getStats() || null,
+      rental: this.taskManager.getRentalState(),
     };
   }
 
