@@ -11,7 +11,7 @@ import { SecurityGate } from '../security/gate.js';
 import { AgentEngine } from '../agent/agent-engine.js';
 import { messageParser } from '../ingress/message-parser.js';
 import { PlatformApiClient } from '../ingress/platform-api.js';
-import { createBuiltinToolRegistry } from '../agent/tool-registry.js';
+import { createDefaultToolRegistry } from '../agent/tool-registry.js';
 import { ToolExecutor } from '../agent/tool-executor.js';
 import { TaskStateMachine } from './task-state-machine.js';
 import { TaskEvaluator } from './task-evaluator.js';
@@ -128,7 +128,7 @@ export class TaskManager {
     );
 
     // Phase 3: 工具系统
-    const registry = createBuiltinToolRegistry();
+    const registry = createDefaultToolRegistry();
     this.toolExecutor = new ToolExecutor(
       registry,
       { security: config.security },

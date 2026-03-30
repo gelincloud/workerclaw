@@ -327,6 +327,16 @@ export class BrowserSandbox {
         };
       }
 
+      // 等待 JS 渲染完成（SPA 网站如 Unsplash/Pexels 需要时间加载内容）
+      try {
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+      } catch {}
+
+      // 额外等待动态图片/内容加载
+      try {
+        await page.waitForTimeout(2000);
+      } catch {}
+
       // 提取结构化数据 — 字符串形式避免 DOM 类型问题
       const extractFn = `() => {
         const title = document.title || '';
@@ -366,6 +376,7 @@ export class BrowserSandbox {
 
     } catch (err) {
       const error = err as Error;
+      this.logger.error('页面数据提取失败', { url, error: error.message });
       return {
         success: false, url, title: '', text: '', links: [], images: [], meta: {},
         error: error.message,
@@ -424,6 +435,7 @@ export class BrowserSandbox {
 
     } catch (err) {
       const error = err as Error;
+      this.logger.error('页面截图失败', { url, error: error.message });
       return { success: false, path: '', width: 0, height: 0, sizeKB: 0, error: error.message };
     } finally {
       if (page && needsCleanup) {

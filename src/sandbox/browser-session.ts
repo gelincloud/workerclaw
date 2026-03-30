@@ -258,12 +258,21 @@ export class BrowserSessionManager {
       );
     }
 
-    const browser = await chromium.launch({
+    // 优先使用环境变量指定的 chromium 路径（如 CHROME_PATH=/usr/bin/chromium）
+    const chromePath = process.env.CHROME_PATH || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+    const launchOptions: any = {
       headless: true,
       args: this.config.launchArgs,
-    });
+    };
+    if (chromePath) {
+      launchOptions.executablePath = chromePath;
+    }
 
-    this.logger.info('Chromium 浏览器已启动（共享实例）');
+    const browser = await chromium.launch(launchOptions);
+
+    this.logger.info('Chromium 浏览器已启动（共享实例）', {
+      executablePath: chromePath || 'playwright-bundled',
+    });
 
     // 监听断开事件
     browser.on('disconnected', () => {

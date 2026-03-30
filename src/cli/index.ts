@@ -10,6 +10,7 @@
  *   workerclaw configure --section llm # 配置指定区域
  *   workerclaw start [config-file]    # 启动 WorkerClaw
  *   workerclaw status                 # 查看状态
+ *   workerclaw token                  # 查看 Token（网页登录用）
  *   workerclaw skills list             # 列出技能
  *   workerclaw skills install <pkg>    # 安装技能包
  *   workerclaw skills uninstall <name> # 卸载技能包
@@ -152,7 +153,10 @@ const main = defineCommand({
 
         // 动态导入核心模块
         const { createWorkerClaw } = await import('../index.js');
-        const workerclaw = createWorkerClaw(config);
+        const { mergeConfig } = await import('../core/config.js');
+        // 用默认值合并用户配置，确保 task.concurrency 等字段存在
+        const mergedConfig = mergeConfig({}, config);
+        const workerclaw = createWorkerClaw(mergedConfig);
 
         // 优雅关闭
         const shutdown = async (signal: string) => {
@@ -238,6 +242,53 @@ const main = defineCommand({
       },
     }),
 
+    // Token 命令
+    token: defineCommand({
+      meta: {
+        name: 'token',
+        description: '查看当前 Agent 的 Token（用于网页登录）',
+      },
+      args: {
+        'config-file': {
+          type: 'string',
+          description: '配置文件路径',
+          alias: 'c',
+        },
+      },
+      async run({ args }) {
+        const configPath = findConfigPath(args['config-file'] as string);
+
+        if (!configPath) {
+          console.error('❌ 未找到配置文件');
+          console.error('   运行 workerclaw configure 进行配置');
+          process.exit(1);
+        }
+
+        try {
+          const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+          const token = config.platform?.token;
+          const botId = config.platform?.botId;
+
+          if (!token) {
+            console.error('❌ 配置文件中未找到 Token');
+            console.error(`   配置文件: ${configPath}`);
+            console.error('   运行 workerclaw configure 重新配置');
+            process.exit(1);
+          }
+
+          if (botId) {
+            console.log(`🦐 Agent ID: ${botId}`);
+          }
+          console.log(`🔑 Token: ${token}`);
+          console.log('');
+          console.log('💡 复制 Token 到智工坊登录页的「养虾人 Token 登录」即可查看收益。');
+        } catch {
+          console.error('❌ 配置文件解析失败');
+          process.exit(1);
+        }
+      },
+    }),
+
     // 技能管理命令
     skills: defineCommand({
       meta: {
@@ -299,7 +350,7 @@ const main = defineCommand({
   // 默认行为：如果没有子命令，显示帮助
   async run({ rawArgs }) {
     // citty 会先执行子命令再执行主命令 run，需要检测是否已有子命令被处理
-    const knownSubCommands = ['configure', 'start', 'status', 'skills', 'experience'];
+    const knownSubCommands = ['configure', 'start', 'status', 'token', 'skills', 'experience'];
     if (rawArgs.length > 0 && knownSubCommands.includes(rawArgs[0])) {
       return; // 子命令已处理，不再输出帮助
     }
@@ -309,6 +360,7 @@ const main = defineCommand({
     console.log('  workerclaw configure              交互式配置向导');
     console.log('  workerclaw start                  启动 WorkerClaw');
     console.log('  workerclaw status                 查看状态');
+    console.log('  workerclaw token                  查看 Token（网页登录用）');
     console.log('  workerclaw skills [list|install|uninstall]  技能管理');
     console.log('  workerclaw experience [list|search|stats|events]  经验基因系统');
     console.log('');

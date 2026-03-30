@@ -19,7 +19,7 @@ import { EventBus, WorkerClawEvent } from '../core/events.js';
 import { LLMClient } from './llm-client.js';
 import { Personality } from './personality.js';
 import { SessionManager } from './session-manager.js';
-import { ToolRegistry } from './tool-registry.js';
+import { ToolRegistry, createDefaultToolRegistry } from './tool-registry.js';
 import { ToolExecutor } from './tool-executor.js';
 import { SkillRunner, type SkillRunnerConfig } from '../skills/skill-runner.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
@@ -88,7 +88,7 @@ export class AgentEngine {
     });
 
     // 工具系统
-    const toolRegistry = new ToolRegistry();
+    const toolRegistry = createDefaultToolRegistry();
     this.toolExecutor = new ToolExecutor(
       toolRegistry,
       { security: config.security },
@@ -584,21 +584,27 @@ export class AgentEngine {
     if (imageSearchKeywords.some(kw => new RegExp(kw, 'i').test(desc))) {
       return [
         '## 📎 找图任务执行指南',
-        '此任务需要你找到并下载一张具体的图片文件，**不能只返回文字说明或搜索结果**。',
+        '此任务需要你找到图片并提供给用户，**你必须立即调用工具搜索图片，不能只回复文字说明！**',
         '',
-        '正确执行步骤：',
-        '1. **使用 `browser_extract` 工具**访问一个图片网站（如 unsplash.com、pexels.com 等免费图库），提取页面中的图片链接',
-        '   - 例：`browser_extract({ url: "https://unsplash.com/s/photos/太空" })`',
-        '2. **从提取结果中找到合适的图片 URL**（.jpg/.png/.webp 结尾的链接）',
-        '3. **使用 `browser_navigate` 工具**访问该图片 URL，参数设 `screenshot: true` 来截取/保存图片',
-        '   - 例：`browser_navigate({ url: "<图片URL>", screenshot: true })`',
-        '4. 截图文件会自动保存在工作目录，系统会将其作为附件提交给发单人',
+        '### 执行步骤（按顺序执行）：',
         '',
-        '⚠️ 重要提醒：',
-        '- 如果 `browser_extract` 找到的图片 URL 是缩略图，尝试直接用 `browser_navigate` 配合 `screenshot: true` 截取大图',
-        '- 最终回复中应说明你找到了什么图片，以及图片保存路径',
-        '- **绝对不要**只回复"我帮你找了xxx"然后给一段文字 — 必须有实际图片文件',
-        '- 如果浏览器工具不可用，使用 `web_search` 搜索图片 URL 并在回复中提供直接下载链接',
+        '**步骤 1：立即调用 web_search 搜索图片**',
+        '- 使用 `web_search` 工具搜索图片相关关键词',
+        '- 例：`web_search({ query: "大海 高清图片 site:unsplash.com" })`',
+        '- 或：`web_search({ query: "大海 免费 高清图片 下载" })`',
+        '',
+        '**步骤 2：整理搜索结果**',
+        '- 从搜索结果中提取图片直接链接（.jpg/.png/.webp 结尾）',
+        '- 如果搜索结果中有图片预览链接，直接使用',
+        '',
+        '**步骤 3：如果有 browser_navigate 工具可用**',
+        '- 访问找到的图片 URL，设置 `screenshot: true` 保存图片',
+        '',
+        '### ⚠️ 关键要求：',
+        '- **第一步必须调用 `web_search` 工具**，不要跳过！',
+        '- **绝对不要**只回复文字说明而没有调用任何工具',
+        '- 如果工具调用失败，再尝试一次或换关键词',
+        '- 最终回复应包含：找到的图片描述 + 图片下载链接',
       ].join('\n');
     }
 
@@ -973,53 +979,105 @@ export class AgentEngine {
 
     // 2. 尝试 browser_extract 从免费图库提取图片
     const imageUrl = await this.autoBrowserExtractImage(searchQuery, context);
-    if (!imageUrl) {
-      // 3. 尝试直接用 browser_navigate 截图
-      this.logger.info(`尝试直接截图 [${taskId}]`);
-      const screenshotUrl = await this.autoBrowserScreenshot(searchQuery, context);
-      if (screenshotUrl) {
+    if (imageUrl) {
+      // 3. 尝试对图片 URL 截图
+      const screenshotPath = await this.autoBrowserScreenshotUrl(imageUrl, context);
+      if (screenshotPath) {
         return {
           taskId,
           status: 'completed',
-          content: `为您找到了"${searchQuery}"相关的图片，已截图保存。`,
+          content: `为您找到了"${searchQuery}"相关的图片！图片已截图保存。\n\n图片来源: ${imageUrl.slice(0, 100)}`,
           outputs: [{
             type: 'image',
-            content: screenshotUrl,
-            name: `${searchQuery}_截图.jpg`,
+            content: screenshotPath,
+            name: `${searchQuery}.jpg`,
           }],
           durationMs: 0,
         };
       }
 
-      // 降级：返回搜索建议
-      this.logger.warn(`自动找图失败 [${taskId}]，浏览器工具可能不可用`);
-      return null;
-    }
-
-    // 4. 尝试对图片 URL 截图
-    const screenshotPath = await this.autoBrowserScreenshotUrl(imageUrl, context);
-    if (screenshotPath) {
+      // 降级：返回图片 URL
       return {
         taskId,
         status: 'completed',
-        content: `为您找到了"${searchQuery}"相关的图片！图片已截图保存。\n\n图片来源: ${imageUrl.slice(0, 100)}`,
-        outputs: [{
-          type: 'image',
-          content: screenshotPath,
-          name: `${searchQuery}.jpg`,
-        }],
+        content: `为您找到了"${searchQuery}"相关的图片！\n\n图片链接: ${imageUrl}\n\n您可以点击链接查看或下载图片。`,
+        outputs: [],
         durationMs: 0,
       };
     }
 
-    // 降级：返回图片 URL
-    return {
-      taskId,
-      status: 'completed',
-      content: `为您找到了"${searchQuery}"相关的图片！\n\n图片链接: ${imageUrl}\n\n您可以点击链接查看或下载图片。`,
-      outputs: [],
-      durationMs: 0,
-    };
+    // 浏览器不可用，降级：使用 web_search 搜索图片
+    this.logger.info(`浏览器不可用，使用 web_search 搜索图片 URL [${taskId}]`);
+    const searchResult = await this.autoSearchForImageUrls(searchQuery, context);
+    if (searchResult) {
+      return searchResult;
+    }
+
+    // 最终降级：返回搜索建议
+    this.logger.warn(`自动找图完全失败 [${taskId}]`);
+    return null;
+  }
+
+  /**
+   * 自动搜索图片 URL（浏览器不可用时的降级方案）
+   */
+  private async autoSearchForImageUrls(
+    query: string,
+    context: TaskExecutionContext,
+  ): Promise<TaskResult | null> {
+    try {
+      const toolCall: ToolCall = {
+        id: `auto-imgsearch-${Date.now()}`,
+        name: 'web_search',
+        arguments: JSON.stringify({ query: `${query} 图片 高清` }),
+      };
+
+      // 给降级调用一个独立的超时窗口，不依赖原始任务的 remainingMs
+      const fallbackContext: TaskExecutionContext = {
+        ...context,
+        receivedAt: Date.now(),  // 重置接收时间
+      };
+
+      const result = await this.handleToolCall(toolCall, {
+        taskId: context.task.taskId,
+        taskType: 'other',
+        title: query,
+        description: '',
+      } as Task, fallbackContext);
+
+      if (result.success && result.content && !result.content.includes('not_implemented')) {
+        // 从搜索结果中提取图片 URL
+        const imgUrls: string[] = [];
+        const urlMatches = result.content.matchAll(/https?:\/\/[^\s"'<>)]+\.(?:jpg|jpeg|png|gif|webp)/gi);
+        for (const m of urlMatches) {
+          imgUrls.push(m[0]);
+          if (imgUrls.length >= 3) break;
+        }
+
+        if (imgUrls.length > 0) {
+          const urlList = imgUrls.map((u, i) => `${i + 1}. ${u}`).join('\n');
+          return {
+            taskId: context.task.taskId,
+            status: 'completed',
+            content: `为您搜索了"${query}"相关的图片，以下是一些搜索结果和图片链接：\n\n${result.content}\n\n---\n📎 找到的图片链接：\n${urlList}\n\n您可以点击以上链接查看或下载图片。`,
+            outputs: [],
+            durationMs: 0,
+          };
+        }
+
+        // 没有直接图片 URL，但搜索结果本身有价值
+          return {
+            taskId: context.task.taskId,
+            status: 'completed',
+            content: `为您搜索了"${query}"相关的图片资源：\n\n${result.content}\n\n💡 提示：您可以访问以上搜索结果页面查找和下载所需图片。`,
+          outputs: [],
+          durationMs: 0,
+        };
+      }
+    } catch (err) {
+      this.logger.debug(`web_search 图片搜索失败`, { error: (err as Error).message });
+    }
+    return null;
   }
 
   /**
@@ -1047,7 +1105,12 @@ export class AgentEngine {
     };
 
     try {
-      const toolResult = await this.handleToolCall(toolCall, task, context);
+      // 给降级搜索一个独立的超时窗口
+      const fallbackContext: TaskExecutionContext = {
+        ...context,
+        receivedAt: Date.now(),
+      };
+      const toolResult = await this.handleToolCall(toolCall, task, fallbackContext);
       if (toolResult.success && toolResult.content) {
         return {
           taskId,
@@ -1104,12 +1167,18 @@ export class AgentEngine {
           arguments: JSON.stringify({ url }),
         };
 
+        // 给降级调用一个独立的超时窗口
+        const fallbackContext: TaskExecutionContext = {
+          ...context,
+          receivedAt: Date.now(),
+        };
+
         const result = await this.handleToolCall(toolCall, {
-          taskId: 'auto',
+          taskId: context.task.taskId,
           taskType: 'other',
           title: query,
           description: '',
-        } as Task, context);
+        } as Task, fallbackContext);
 
         if (result.success && result.content) {
           // 从提取结果中找图片 URL
