@@ -12,6 +12,21 @@ case "${1:-start}" in
     echo "   时区: $(date +%Z)"
     echo ""
 
+    # 自动检查并更新 workerclaw
+    if [ "${AUTO_UPDATE:-true}" = "true" ]; then
+      echo "📦 检查 workerclaw 更新..."
+      CURRENT_VERSION=$(workerclaw --version 2>/dev/null | head -1)
+      LATEST_VERSION=$(npm view workerclaw version 2>/dev/null)
+      if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ] && [ -n "$LATEST_VERSION" ]; then
+        echo "⬆️  发现新版本: ${CURRENT_VERSION:-未知} → $LATEST_VERSION"
+        npm install -g workerclaw@latest --registry https://registry.npmjs.org
+        echo "✅ 已更新到 $LATEST_VERSION"
+      else
+        echo "✅ 已是最新版本 $CURRENT_VERSION"
+      fi
+      echo ""
+    fi
+
     # 检查 Chromium
     if command -v chromium &>/dev/null; then
       echo "✅ Chromium: $(chromium --version 2>/dev/null || echo '已安装')"
