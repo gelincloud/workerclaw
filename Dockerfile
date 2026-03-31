@@ -26,8 +26,8 @@ RUN npm config set registry https://registry.npmjs.org && \
     npm install -g workerclaw@latest && \
     npm config set registry https://registry.npmjs.org
 
-# 创建数据目录
-RUN mkdir -p /app/data/experience
+# 创建配置目录 (~/.workerclaw)
+RUN mkdir -p /root/.workerclaw/experience
 
 # 复制入口脚本
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh

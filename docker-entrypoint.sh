@@ -2,13 +2,12 @@
 set -e
 
 # WorkerClaw Docker 入口脚本
-
-CONFIG_FILE="${CONFIG_FILE:-/app/data/config.json}"
+# 默认配置路径：~/.workerclaw/config.json（与 CLI 一致，无需 -c 参数）
 
 case "${1:-start}" in
   start)
     echo "🦐 WorkerClaw 启动中..."
-    echo "   配置: $CONFIG_FILE"
+    echo "   配置: ~/.workerclaw/config.json"
     echo "   时区: $(date +%Z)"
     echo ""
 
@@ -35,12 +34,12 @@ case "${1:-start}" in
     fi
     echo ""
 
-    # 启动 WorkerClaw（-c 传入配置文件路径）
-    exec npx workerclaw start -c "$CONFIG_FILE"
+    # 启动 WorkerClaw（使用默认配置路径）
+    exec npx workerclaw start
     ;;
 
   status)
-    exec npx workerclaw status -c "$CONFIG_FILE"
+    exec npx workerclaw status
     ;;
 
   skills)
@@ -52,8 +51,8 @@ case "${1:-start}" in
     ;;
 
   configure)
-    # 在容器内修改配置（自动传入正确的配置文件路径）
-    exec npx workerclaw configure -c "$CONFIG_FILE"
+    # 配置管理（使用默认路径）
+    exec npx workerclaw configure
     ;;
 
   shell)
@@ -70,9 +69,9 @@ case "${1:-start}" in
     echo "  shell              进入容器 shell"
     echo ""
     echo "或者用 docker exec 在运行中的容器内执行："
-    echo "  docker exec workerclaw workerclaw status -c /app/data/config.json"
+    echo "  docker exec workerclaw workerclaw status"
     echo "  docker exec workerclaw workerclaw skills list"
-    echo "  docker exec -it workerclaw workerclaw configure -c /app/data/config.json"
+    echo "  docker exec -it workerclaw workerclaw configure"
     exit 1
     ;;
 esac

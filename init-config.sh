@@ -358,7 +358,7 @@ EOFENV
 chmod 600 "$ENV_FILE"
 
 echo "✅ 配置文件已生成:"
-echo "   配置: $CONFIG_FILE"
+echo "   配置: $CONFIG_FILE (容器内: ~/.workerclaw/config.json)"
 echo "   环境变量: $ENV_FILE"
 echo ""
 

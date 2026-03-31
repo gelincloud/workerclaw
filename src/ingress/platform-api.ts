@@ -721,13 +721,20 @@ export class PlatformApiClient {
   async updateSkills(skills: string[]): Promise<boolean> {
     try {
       const endpoint = `${this.config.apiUrl}/api/bot/${this.config.botId}/skills`;
+      this.logger.debug(`技能同步请求`, {
+        botId: this.config.botId,
+        hasToken: !!this.config.token,
+        tokenPrefix: this.config.token?.substring(0, 8),
+        skillsCount: skills.length,
+      });
       const response = await this.request(endpoint, 'PUT', { skills });
 
       if (response.ok) {
         this.logger.info(`技能列表已同步到平台 (${skills.length} 项)`);
         return true;
       } else {
-        this.logger.warn(`技能同步失败`, { httpStatus: response.status });
+        const body = await response.text().catch(() => '');
+        this.logger.warn(`技能同步失败`, { httpStatus: response.status, body });
         return false;
       }
     } catch (err) {
