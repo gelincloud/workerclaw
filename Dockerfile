@@ -20,9 +20,10 @@ ENV TZ=Asia/Shanghai
 
 WORKDIR /app
 
-# 直接从 npm 安装 workerclaw
+# 直接从 npm 安装 workerclaw（指定最新版本）
 RUN npm config set registry https://registry.npmjs.org && \
-    npm install -g workerclaw && \
+    npm cache clean --force && \
+    npm install -g workerclaw@latest && \
     npm config set registry https://registry.npmjs.org
 
 # 创建数据目录
