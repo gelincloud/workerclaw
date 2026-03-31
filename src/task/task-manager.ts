@@ -657,25 +657,67 @@ export class TaskManager {
         }
       }
 
-      // 1. 意图检测前置：操作关键词正则预过滤
-      const actionKeywordRegex = /撤销|取消|放弃|退单|不要了|不做了|进度|进展|怎么样了|做完了吗|查.*进度/;
-      const taskRequestRegex = /帮我|能帮我|帮忙|请帮我|能不能|会不会|可不可以|做.*视频|写.*文章|搜.*图|找.*图|画.*图|生成.*图|做个|写个|翻译|分析|处理|下载|查一下|搜一下/;
-      const priceKeywordRegex = /多少钱|什么价|费用|价格|报价|收费|报酬|成本|贵不贵|便宜|砍价|能便宜吗|优惠|我出.*元|我出.*块|给.*钱/;
-      const hasActionKeyword = actionKeywordRegex.test(content);
-      const hasTaskRequestKeyword = taskRequestRegex.test(content);
-      const hasPriceKeyword = priceKeywordRegex.test(content);
+      // 1. 单次 LLM 调用：意图检测 + 回复生成
+      const botName = personality.name || '打工虾';
+      const basePrompt = personality.customSystemPrompt ||
+        `你是${botName}，智工坊平台上的一名打工虾，语气${personality.tone || '友好热情'}。` +
+        (personality.bio ? `\n简介：${personality.bio}` : '');
 
-      // 1. 操作意图检测（撤销任务、查询进度、价格咨询）
-      // 价格关键词也触发意图检测，降低触发阈值（5字符）
-      const intentMinLength = hasPriceKeyword ? 3 : 10;
-      if (content.length > intentMinLength || (content.length > 3 && hasActionKeyword) || hasPriceKeyword) {
-        const intentResult = await Promise.race([
-          this.detectIntent(content, privateMsg.sender_id),
-          new Promise<null>(resolve => setTimeout(() => resolve(null), 10000)),
-        ]);
+      const intentSystemPrompt = basePrompt + `
 
+【私信处理规则】
+你需要分析用户消息，判断意图并给出回复。
+
+可能的意图：
+- cancel_task: 用户想取消/撤销/放弃任务
+- check_progress: 用户想查任务进度/状态
+- price_inquiry: 用户询问价格/费用/报酬
+- null: 普通闲聊或任务需求咨询
+
+返回严格的 JSON 格式（不要输出其他内容）：
+{
+  "intent": "cancel_task" 或 "check_progress" 或 "price_inquiry" 或 null,
+  "reply": "给用户的回复文本（1-3句话，自然友好）"
+}
+
+【重要规则】
+- 如果检测到 cancel_task/check_progress/price_inquiry，reply 可以为空，系统会自动处理意图。
+- 如果 intent 为 null，reply 必须有内容，用于回复用户。
+- 对方提出任务需求时（如"帮我做XX"），引导对方发任务："这个我会做！你可以发个任务给我，我接了就开始干活～"
+- 对方只是闲聊问候，正常友好回复即可。
+- 只输出 JSON，不要加 markdown 代码块标记。`;
+
+      // 调用 LLM 获取意图和回复
+      const llmResult = await this.agentEngine.generateReply(
+        intentSystemPrompt,
+        `用户私信: "${content}"`,
+      );
+
+      if (!llmResult) {
+        this.logger.warn('LLM 返回空结果');
+        return;
+      }
+
+      // 解析 JSON 响应
+      let parsed: { intent: string | null; reply: string } = { intent: null, reply: '' };
+      try {
+        // 尝试提取 JSON（可能被 markdown 包裹）
+        const jsonMatch = llmResult.match(/\{[\s\S]*?\}/);
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[0]);
+        }
+      } catch (parseErr) {
+        this.logger.warn('解析 LLM 响应失败，作为普通回复处理', { raw: llmResult.substring(0, 100) });
+        parsed = { intent: null, reply: llmResult };
+      }
+
+      this.logger.info(`🔍 意图检测结果: ${parsed.intent || 'null'}`);
+
+      // 2. 处理意图
+      if (parsed.intent) {
+        const intentResult = await this.executeIntent(parsed.intent, content, privateMsg.sender_id);
         if (intentResult) {
-          this.logger.info(`🎯 意图已执行: ${intentResult.action}`);
+          // 意图已执行，发送系统生成的回复
           const sendResult = await this.platformApi.sendPrivateMessage(
             this.config.platform.botId,
             privateMsg.sender_id,
@@ -684,46 +726,19 @@ export class TaskManager {
           if (sendResult.success) {
             this.logger.info(`💌 意图回复已发送 → ${senderName}: ${intentResult.message.substring(0, 50)}`);
           }
-          return; // 意图已处理，不走普通回复
+          return;
         }
       }
 
-      // 2. 构建 LLM prompt（含任务引导规则）
-      const botName = personality.name || '打工虾';
-      const basePrompt = personality.customSystemPrompt ||
-        `你是${botName}，智工坊平台上的一名打工虾，语气${personality.tone || '友好热情'}。` +
-        (personality.bio ? `\n简介：${personality.bio}` : '');
-
-      const taskGuidance = `
-【重要行为规则】
-- 你的能力只有在接到任务后才能使用，聊天时你无法直接执行任务。
-- 对方提出具体任务需求时（如"帮我做视频"、"帮我写个XX"、"帮我搜索XX"、"帮我找个太空图片"等），你要热情回应，说明自己能做，并引导对方给你发任务。
-  例如："这个我会做！你可以在聊天窗口点'新建任务'发给我，我接了就能开始干活了～"
-- 对方只是闲聊、问候、聊天，正常回应即可，不需要每次都提发任务。
-- 对方问"你能做什么"，简要介绍自己的能力，并说"发个任务给我试试就知道了"。
-- 绝对不要在聊天中直接帮对方完成任务，也不要说"我做不了"，而是说"给我发个任务吧"。
-- 如果对方问到价格/费用，简单说"价格看你具体需求，你先说说想做什么，我给你估个价～"即可。
-  不要给出具体数字，因为详细估价已经由意图检测系统处理。
-- 注意：如果这条消息是关于价格/费用的问题，它应该已经被前置的意图检测系统拦截处理了。
-  如果你看到这条消息，说明它不是价格咨询，请正常回复。
-
-回复要求：自然、友好、简洁（1-3句话），符合你的人格设定。不要重复对方说过的话。只输出回复内容，不要加引号或前缀。`;
-
-      const systemPrompt = basePrompt + taskGuidance;
-
-      const result = await this.agentEngine.generateReply(
-        systemPrompt,
-        `来自${senderName}的私信：\n${content}`,
-      );
-
-      if (result) {
+      // 3. 没有意图或意图执行失败，使用 LLM 生成的回复
+      if (parsed.reply) {
         const sendResult = await this.platformApi.sendPrivateMessage(
           this.config.platform.botId,
           privateMsg.sender_id,
-          result,
+          parsed.reply,
         );
         if (sendResult.success) {
-          this.logger.info(`💌 已回复私信 → ${senderName}: ${result.substring(0, 50)}`);
+          this.logger.info(`💌 已回复私信 → ${senderName}: ${parsed.reply.substring(0, 50)}`);
         } else {
           this.logger.warn(`💌 私信回复失败`, { error: sendResult.error });
         }
@@ -850,42 +865,19 @@ export class TaskManager {
   }
 
   /**
-   * 检测私信中的操作意图（撤销任务、查询进度、价格咨询）
-   * 参照 OpenClaw 插件的 detectAndExecuteIntent 设计
+   * 执行已识别的意图（由 LLM 返回的意图）
    *
    * 返回: { action, message } 或 null
    */
-  private async detectIntent(
+  private async executeIntent(
+    intent: string,
     content: string,
     senderId: string,
   ): Promise<{ action: string; message: string } | null> {
     try {
-      // 快速正则检测（不调用 LLM，避免超时）
-      const cancelKeywords = /撤销|取消|放弃|退单|不要了|不做了/;
-      const progressKeywords = /进度|进展|怎么样了|做完了吗|完成了吗|任务状态|什么时候能好/;
-      const priceKeywords = /多少钱|什么价|费用|价格|报价|收费|报酬|成本|贵不贵|便宜|砍价|能便宜吗|优惠|我出.*元|我出.*块/;
-
-      // 如果明确匹配某个意图，直接执行（不需要 LLM）
-      let detectedIntent: string | null = null;
-
-      if (cancelKeywords.test(content)) {
-        detectedIntent = 'cancel_task';
-      } else if (progressKeywords.test(content)) {
-        detectedIntent = 'check_progress';
-      } else if (priceKeywords.test(content)) {
-        detectedIntent = 'price_inquiry';
-      }
-
-      // 只有在不明确时才调用 LLM（目前所有情况都能用正则判断，可以跳过 LLM）
-      // 如果未来需要更复杂的意图检测，可以在这里调用 LLM
-
-      if (!detectedIntent) {
-        return null;
-      }
-
       // 执行意图
-      if (detectedIntent === 'cancel_task') {
-        // 查找已接单但未完成的任务（accepted 或 running 状态）
+      if (intent === 'cancel_task') {
+        // 查找已接单但未完成的任务（accepted 或 evaluating 状态）
         const taskIds = this.stateMachine.getActiveTaskIds();
         const cancellableTasks: Array<{ id: string; status: string; data?: any }> = [];
 
@@ -944,7 +936,7 @@ export class TaskManager {
         };
       }
 
-      if (detectedIntent === 'check_progress') {
+      if (intent === 'check_progress') {
         const status = this.getStatus();
         if (status.runningTasks > 0) {
           return {
@@ -961,7 +953,7 @@ export class TaskManager {
         return { action: 'check_progress', message: '目前没有正在执行中的任务哦，您可以随时发任务给我！' };
       }
 
-      if (detectedIntent === 'price_inquiry') {
+      if (intent === 'price_inquiry') {
         // 价格咨询 → 转到专门的估价处理
         const priceReply = await this.handlePriceInquiry(content);
         return { action: 'price_inquiry', message: priceReply };
@@ -969,7 +961,7 @@ export class TaskManager {
 
       return null;
     } catch (err) {
-      this.logger.error('意图检测异常', { error: (err as Error).message });
+      this.logger.error('意图执行异常', { error: (err as Error).message });
       return null;
     }
   }
