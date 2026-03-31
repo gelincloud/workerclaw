@@ -642,7 +642,22 @@ export class TaskManager {
       const senderName = privateMsg.sender?.nickname || '用户';
       const content = privateMsg.content || '';
 
-      // 0. 意图检测前置：操作关键词正则预过滤
+      // 0. 任务选择操作检测（如"取消1"、"取消全部"）
+      const selectMatch = content.match(/^取消\s*(\d+|全部|所有)/);
+      if (selectMatch) {
+        const selection = selectMatch[1];
+        const cancelResult = await this.handleCancelSelection(selection, privateMsg.sender_id);
+        if (cancelResult) {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            privateMsg.sender_id,
+            cancelResult,
+          );
+          return;
+        }
+      }
+
+      // 1. 意图检测前置：操作关键词正则预过滤
       const actionKeywordRegex = /撤销|取消|放弃|退单|不要了|不做了|进度|进展|怎么样了|做完了吗|查.*进度/;
       const taskRequestRegex = /帮我|能帮我|帮忙|请帮我|能不能|会不会|可不可以|做.*视频|写.*文章|搜.*图|找.*图|画.*图|生成.*图|做个|写个|翻译|分析|处理|下载|查一下|搜一下/;
       const priceKeywordRegex = /多少钱|什么价|费用|价格|报价|收费|报酬|成本|贵不贵|便宜|砍价|能便宜吗|优惠|我出.*元|我出.*块|给.*钱/;
@@ -773,6 +788,65 @@ export class TaskManager {
     } catch (err) {
       this.logger.error('聊天室回复处理异常', err);
     }
+  }
+
+  /**
+   * 处理任务取消选择（"取消1"、"取消全部"）
+   * @returns 回复消息，null 表示无效选择
+   */
+  private async handleCancelSelection(selection: string, senderId: string): Promise<string | null> {
+    const taskIds = this.stateMachine.getActiveTaskIds();
+    const cancellableTasks: Array<{ id: string; status: string; data?: any }> = [];
+
+    for (const taskId of taskIds) {
+      const status = this.stateMachine.getStatus(taskId);
+      if (status === 'accepted' || status === 'evaluating') {
+        const metadata = this.stateMachine.getMetadata(taskId);
+        cancellableTasks.push({
+          id: taskId,
+          status: status || 'unknown',
+          data: metadata?.originalData,
+        });
+      }
+    }
+
+    if (cancellableTasks.length === 0) {
+      return '没有可取消的任务了。';
+    }
+
+    // 取消全部
+    if (selection === '全部' || selection === '所有') {
+      let cancelled = 0;
+      let failed = 0;
+      for (const task of cancellableTasks) {
+        const result = await this.platformApi.cancelTake(task.id);
+        if (result.success) {
+          this.stateMachine.tryTransition(task.id, 'cancelled', '用户通过私信批量取消');
+          cancelled++;
+        } else {
+          failed++;
+        }
+      }
+      if (failed === 0) {
+        return `✅ 已取消全部 ${cancelled} 个任务。`;
+      }
+      return `已取消 ${cancelled} 个任务，${failed} 个取消失败。`;
+    }
+
+    // 按序号取消
+    const index = parseInt(selection, 10) - 1;
+    if (isNaN(index) || index < 0 || index >= cancellableTasks.length) {
+      return `无效的序号，请输入 1-${cancellableTasks.length} 或"取消全部"。`;
+    }
+
+    const task = cancellableTasks[index];
+    const cancelResult = await this.platformApi.cancelTake(task.id);
+    if (cancelResult.success) {
+      this.stateMachine.tryTransition(task.id, 'cancelled', '用户通过私信选择取消');
+      const taskDesc = task.data?.content?.substring(0, 30) || '任务';
+      return `✅ 已取消任务：${taskDesc}...`;
+    }
+    return `取消失败: ${cancelResult.error || '未知错误'}`;
   }
 
   /**

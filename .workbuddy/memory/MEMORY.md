@@ -107,6 +107,7 @@
 | v0.13.7 | 浏览器导航重构: 移除重复 goto、修复会话管理、正确处理 activePages |
 | v0.13.8 | 任务超时后完成修复: 允许 timeout → completed/failed 状态转换，使用 tryTransition 避免异常 |
 | v0.13.9 | 任务状态恢复: 启动时同步已接单任务(getTakenTasks)+initFromPlatform+CLI tasks list/cancel 命令 |
+| v0.13.10 | 改进 cancel_task 意图: 多任务场景列出供用户选择+区分可取消(accepted/evaluating)与不可取消(running) |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration
