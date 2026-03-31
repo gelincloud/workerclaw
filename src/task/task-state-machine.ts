@@ -145,6 +145,13 @@ export class TaskStateMachine {
   }
 
   /**
+   * 获取任务的元数据
+   */
+  getMetadata(taskId: string): Record<string, any> | undefined {
+    return this.states.get(taskId)?.metadata;
+  }
+
+  /**
    * 检查任务是否处于终态
    */
   isTerminal(taskId: string): boolean {

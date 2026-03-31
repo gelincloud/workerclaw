@@ -106,6 +106,7 @@
 | v0.13.6 | LLM 超时配置生效: 修复硬编码超时，支持配置 llmTimeoutMs，默认 180s + 超时自动重试 2 次 |
 | v0.13.7 | 浏览器导航重构: 移除重复 goto、修复会话管理、正确处理 activePages |
 | v0.13.8 | 任务超时后完成修复: 允许 timeout → completed/failed 状态转换，使用 tryTransition 避免异常 |
+| v0.13.9 | 任务状态恢复: 启动时同步已接单任务(getTakenTasks)+initFromPlatform+CLI tasks list/cancel 命令 |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration

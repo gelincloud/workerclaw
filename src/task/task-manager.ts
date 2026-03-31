@@ -820,21 +820,63 @@ export class TaskManager {
 
       // 执行意图
       if (parsed.intent === 'cancel_task') {
-        // 查找进行中的任务
-        const status = this.getStatus();
-        if (status.runningTasks > 0) {
-          // 取最近一个任务尝试取消（简化版）
-          const taskIds = this.stateMachine.getActiveTaskIds();
-          if (taskIds.length > 0) {
-            const taskId = taskIds[0];
-            const cancelResult = await this.platformApi.cancelTake(taskId);
-            if (cancelResult.success) {
-              return { action: 'cancel_task', message: '好的，我已经撤销了这个任务。' };
-            }
-            return { action: 'cancel_task', message: `撤销失败: ${cancelResult.error || '未知错误'}` };
+        // 查找已接单但未完成的任务（accepted 或 running 状态）
+        const taskIds = this.stateMachine.getActiveTaskIds();
+        const cancellableTasks: Array<{ id: string; status: string; data?: any }> = [];
+
+        for (const taskId of taskIds) {
+          const status = this.stateMachine.getStatus(taskId);
+          // 只取消 accepted 或 evaluating 状态的任务（未开始执行）
+          if (status === 'accepted' || status === 'evaluating') {
+            const metadata = this.stateMachine.getMetadata(taskId);
+            cancellableTasks.push({
+              id: taskId,
+              status: status || 'unknown',
+              data: metadata?.originalData,
+            });
           }
         }
-        return { action: 'cancel_task', message: '我目前没有进行中的任务可以撤销。' };
+
+        if (cancellableTasks.length === 0) {
+          // 检查是否有正在执行的任务
+          const runningCount = taskIds.filter(id => {
+            const s = this.stateMachine.getStatus(id);
+            return s === 'running';
+          }).length;
+
+          if (runningCount > 0) {
+            return {
+              action: 'cancel_task',
+              message: `我目前有 ${runningCount} 个任务正在执行中，无法中途取消。\n\n如需取消，请联系平台客服或在任务完成后拒收。`,
+            };
+          }
+          return { action: 'cancel_task', message: '我目前没有已接单但未执行的任务可以撤销。' };
+        }
+
+        // 如果只有一个可取消的任务，直接取消
+        if (cancellableTasks.length === 1) {
+          const task = cancellableTasks[0];
+          const cancelResult = await this.platformApi.cancelTake(task.id);
+          if (cancelResult.success) {
+            this.stateMachine.tryTransition(task.id, 'cancelled', '用户通过私信取消');
+            const taskDesc = task.data?.content?.substring(0, 30) || '任务';
+            return {
+              action: 'cancel_task',
+              message: `✅ 已取消任务：${taskDesc}...\n\n如果您有其他需求，随时可以发新任务给我！`,
+            };
+          }
+          return { action: 'cancel_task', message: `取消失败: ${cancelResult.error || '未知错误'}` };
+        }
+
+        // 多个任务：列出供用户选择
+        const taskList = cancellableTasks
+          .map((t, i) => `${i + 1}. ${t.data?.content?.substring(0, 30) || t.id}...`)
+          .join('\n');
+
+        return {
+          action: 'cancel_task',
+          message: `📋 您有 ${cancellableTasks.length} 个已接单但未执行的任务：\n\n${taskList}\n\n请回复序号（如"取消1"）或"取消全部"来取消对应任务。`,
+        };
       }
 
       if (parsed.intent === 'check_progress') {
