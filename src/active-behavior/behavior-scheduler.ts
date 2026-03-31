@@ -410,25 +410,38 @@ export class BehaviorScheduler {
 
     // 尝试解析JSON
     try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.title && parsed.content) {
-          const category = parsed.category || '思考';
-          const published = this.callbacks.publishBlog
-            ? await this.callbacks.publishBlog(parsed.title.trim(), parsed.content.trim(), category)
-            : false;
-          return {
-            type: 'blog',
-            success: published,
-            content: published ? `博客「${parsed.title}」` : undefined,
-            error: published ? undefined : '博客发布回调未配置',
-            durationMs: Date.now() - startTime,
-          };
+      // 提取 JSON 内容（支持 markdown 代码块格式）
+      let jsonStr = content;
+      
+      // 尝试提取 markdown 代码块中的 JSON
+      const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1].trim();
+      } else {
+        // 没有代码块，尝试直接匹配 JSON 对象
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          jsonStr = jsonMatch[0];
         }
       }
-    } catch {
-      // JSON解析失败，跳过
+      
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.title && parsed.content) {
+        const category = parsed.category || '思考';
+        this.logger.debug('博客内容解析成功', { title: parsed.title, category });
+        const published = this.callbacks.publishBlog
+          ? await this.callbacks.publishBlog(parsed.title.trim(), parsed.content.trim(), category)
+          : false;
+        return {
+          type: 'blog',
+          success: published,
+          content: published ? `博客「${parsed.title}」` : undefined,
+          error: published ? undefined : '博客发布回调未配置',
+          durationMs: Date.now() - startTime,
+        };
+      }
+    } catch (parseErr) {
+      this.logger.warn('博客 JSON 解析失败', { error: (parseErr as Error).message, content: content.substring(0, 200) });
     }
 
     return {

@@ -35,7 +35,7 @@
 - **安全审查**: 速率限制→来源验证→内容安全扫描→权限分级(read_only/limited/standard/elevated)
 - **沙箱**: 命令/文件系统/网络/浏览器(Process级轻量)
 - **设计文档**: `workerclaw-design.md`
-- **npm包**: `workerclaw`, 当前版本 0.12.8
+- **npm包**: `workerclaw`, 当前版本 0.13.4
 - **配置文件**: ~/.workerclaw/config.json
 
 ### OpenClaw 平台信息
@@ -91,6 +91,21 @@
 | v0.12.6 | workerclaw token CLI命令(输出botId+token, 支持-c参数) |
 | v0.12.7 | 找图降级链全面修复(browser_extract null check+Bing备用引擎+截图图库降级+搜索建议兜底) |
 | v0.12.8 | Bing解析修正(避免URL粘在一起)+降级链审查(找图任务无图片文件则failed,不再纯文字completed) |
+| v0.12.9 | tool_choice='auto' 修复 LLM 不调用工具的问题(某些模型如 glm-4 需要显式设置才知道应该使用 function calling) |
+| v0.12.10 | LLM 调试日志增强(toolChoice/hasTools/rawToolCallsCount) |
+| v0.12.11 | 工具调用启用日志(INFO 级别,显示 toolCount/toolChoice),NVIDIA NIM 默认 tool_choice='none' 必须显式设置 'auto' |
+| v0.12.12 | 工具获取调试日志(builtinCount/skillCount/totalCount),排查工具列表为空的问题 |
+| v0.12.13 | 工具格式兼容修复(OpenAI格式{type:'function',function:{name}}和原始格式{name}),修复工具过滤失败导致tools为空的问题 |
+| v0.12.14 | validToolCount 日志增强,确认工具正确传递 |
+| v0.13.0 | 多 LLM 提供商适配器系统(OpenAI兼容/Claude/Gemini三种格式自动适配,新增 llm-provider.ts) |
+| v0.13.1 | 完善提供商检测(支持15+主流模型:DeepSeek/GLM/Qwen/Kimi/Doubao/Baichuan/MiniMax/Grok等),更新README文档 |
+| v0.13.2 | 博客发布修复: JSON解析增强(支持markdown代码块格式)+参数验证+详细日志 |
+| v0.13.3 | 权限自动提升: 任务描述包含浏览器/截图等关键词时自动提升到 elevated 权限 |
+| v0.13.4 | 文件上传修复: 上传文件时添加 Data URL 前缀 (data:xxx;base64,xxx) |
+| v0.13.5 | 浏览器导航修复: page.evaluate() 返回 undefined 时添加默认值，避免 TypeError |
+| v0.13.6 | LLM 超时配置生效: 修复硬编码超时，支持配置 llmTimeoutMs，默认 180s + 超时自动重试 2 次 |
+| v0.13.7 | 浏览器导航重构: 移除重复 goto、修复会话管理、正确处理 activePages |
+| v0.13.8 | 任务超时后完成修复: 允许 timeout → completed/failed 状态转换，使用 tryTransition 避免异常 |
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration

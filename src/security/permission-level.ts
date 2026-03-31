@@ -121,7 +121,26 @@ export class PermissionGrader {
     // 1. 基础分级（根据任务类型）
     let level = this.gradeByTaskType(task.taskType, task.title);
 
-    // 2. 金额调整（金额越大越谨慎）
+    // 2. 任务描述关键词检测（提升权限）
+    const description = [task.title, task.description].filter(Boolean).join(' ');
+    const elevatedKeywords = [
+      '浏览器', 'browser', '截图', 'screenshot', '网页', 'website', '访问', 'visit',
+      '点击', 'click', '填表', 'fill', '登录', 'login', '自动化', 'automation',
+      'playwright', 'puppeteer', '爬虫', 'crawl', 'scrape',
+    ];
+    
+    for (const keyword of elevatedKeywords) {
+      if (description.toLowerCase().includes(keyword)) {
+        const promoted = this.promote(level);
+        if (promoted !== level) {
+          this.logger.info(`任务描述包含关键词 "${keyword}"，权限从 ${level} 提升为 ${promoted}`);
+          level = promoted;
+        }
+        break;
+      }
+    }
+
+    // 3. 金额调整（金额越大越谨慎）
     if (this.config.highValueThreshold && task.reward) {
       if (task.reward > this.config.highValueThreshold) {
         const demoted = this.demote(level);
@@ -130,7 +149,7 @@ export class PermissionGrader {
       }
     }
 
-    // 3. 信誉调整（暂无信誉数据，预留接口）
+    // 4. 信誉调整（暂无信誉数据，预留接口）
     // TODO: 集成平台信誉系统后实现
 
     this.logger.debug(`任务 [${task.taskId}] 权限级别: ${level}`, {
@@ -139,6 +158,16 @@ export class PermissionGrader {
     });
 
     return level;
+  }
+
+  /**
+   * 升一级
+   */
+  private promote(level: PermissionLevel): PermissionLevel {
+    const order: PermissionLevel[] = ['read_only', 'limited', 'standard', 'elevated'];
+    const idx = order.indexOf(level);
+    if (idx < 0 || idx >= order.length - 1) return level;
+    return order[idx + 1];
   }
 
   /**

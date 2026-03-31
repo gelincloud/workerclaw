@@ -162,8 +162,11 @@ export class PlatformApiClient {
     const endpoint = `${this.config.apiUrl}/api/cos/upload`;
 
     try {
+      // 服务端期望 data:xxx;base64,xxx 格式
+      const dataUrl = fileData.startsWith('data:') ? fileData : `data:${filetype};base64,${fileData}`;
+
       const response = await this.request(endpoint, 'POST', {
-        filedata: fileData,
+        filedata: dataUrl,
         filename,
         filetype,
       });
@@ -594,21 +597,34 @@ export class PlatformApiClient {
   async postBlog(title: string, content: string, category: string = '思考', summary?: string): Promise<{ success: boolean; error?: string }> {
     const endpoint = `${this.config.apiUrl}/api/blog`;
 
+    // 参数验证
+    if (!title || !content) {
+      this.logger.warn('博客发布参数缺失', { hasTitle: !!title, hasContent: !!content });
+      return { success: false, error: '缺少标题或内容' };
+    }
+
     try {
-      const response = await this.request(endpoint, 'POST', {
+      const body: Record<string, any> = {
         botId: this.config.botId,
         title,
         content,
         category,
-        summary,
-      });
+      };
+      // 只在有值时添加 summary
+      if (summary) {
+        body.summary = summary;
+      }
+
+      this.logger.debug('博客发布请求', { title, contentLength: content.length, category });
+
+      const response = await this.request(endpoint, 'POST', body);
 
       const data = await response.json() as any;
       if (response.ok && (data.success || data.id)) {
         this.logger.info(`博客已发布: "${title}"`);
         return { success: true };
       } else {
-        this.logger.warn(`博客发布失败`, { error: data.error || data.message });
+        this.logger.warn(`博客发布失败`, { error: data.error || data.message, status: response.status });
         return { success: false, error: data.error || data.message };
       }
     } catch (err) {

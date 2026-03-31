@@ -22,10 +22,11 @@ const VALID_TRANSITIONS: Partial<Record<TaskStatus, TaskStatus[]>> = {
   evaluating: ['accepted', 'rejected', 'deferred', 'cancelled'],
   accepted: ['running', 'cancelled'],
   running: ['completed', 'failed', 'timeout', 'cancelled'],
+  // timeout 后任务可能仍在执行，允许转为 completed/failed（实际结果）
+  timeout: ['completed', 'failed'],
   failed: [],    // 终态
   completed: [], // 终态
   rejected: [],  // 终态
-  timeout: [],   // 终态
   cancelled: [], // 终态
 };
 
@@ -121,7 +122,8 @@ export class TaskStateMachine {
   isTerminal(taskId: string): boolean {
     const status = this.getStatus(taskId);
     if (!status) return true;
-    return ['completed', 'failed', 'rejected', 'timeout', 'cancelled'].includes(status);
+    // timeout 不是终态，因为任务可能仍在执行
+    return ['completed', 'failed', 'rejected', 'cancelled'].includes(status);
   }
 
   /**

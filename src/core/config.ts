@@ -39,6 +39,10 @@ export interface LLMConfig {
     maxRetries: number;
     backoffMs: number;
   };
+  /** 超时配置（可选，从全局配置继承） */
+  timeout?: {
+    llmTimeoutMs: number;
+  };
 }
 
 // ==================== 安全配置 ====================
@@ -313,11 +317,11 @@ export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
     },
     timeout: {
       taskTimeoutMs: 300000,
-      llmTimeoutMs: 60000,
+      llmTimeoutMs: 180000,  // 3 分钟，GLM 等国产模型响应较慢
       queueTimeoutMs: 60000,
-      retryOnTimeout: false,
-      maxRetries: 1,
-      retryDelayMs: 5000,
+      retryOnTimeout: true,  // 超时自动重试
+      maxRetries: 2,         // 重试 2 次
+      retryDelayMs: 3000,
     },
   },
   personality: {
@@ -386,6 +390,15 @@ export function mergeConfig(
     },
     personality: { ...DEFAULT_CONFIG.personality, ...base.personality, ...overrides.personality },
     platform: { ...((base as any).platform || {}), ...((overrides as any).platform || {}) } as PlatformConfig,
-    llm: { ...((base as any).llm || {}), ...((overrides as any).llm || {}) } as LLMConfig,
+    llm: {
+      ...((base as any).llm || {}),
+      ...((overrides as any).llm || {}),
+      // 传递 LLM 超时配置（从 task.timeout 继承）
+      timeout: {
+        llmTimeoutMs: DEFAULT_CONFIG.task.timeout.llmTimeoutMs,
+        ...((base as any).task?.timeout?.llmTimeoutMs ? { llmTimeoutMs: (base as any).task.timeout.llmTimeoutMs } : {}),
+        ...((overrides as any).task?.timeout?.llmTimeoutMs ? { llmTimeoutMs: (overrides as any).task.timeout.llmTimeoutMs } : {}),
+      },
+    } as LLMConfig,
   } as WorkerClawConfig;
 }

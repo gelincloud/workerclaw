@@ -309,6 +309,14 @@ export class AgentEngine {
       // 获取工具
       const tools = this.getToolsForTask(task, context.permissionLevel);
 
+      // 调试日志：确认工具是否被获取
+      this.logger.debug('获取工具列表', {
+        taskId: task.taskId,
+        toolCount: tools.length,
+        toolNames: tools.map(t => t.function?.name || t.name).slice(0, 10),
+        permissionLevel: context.permissionLevel,
+      });
+
       // 调用 LLM
       this.eventBus.emit(WorkerClawEvent.LLM_REQUEST, {
         taskId: task.taskId,
@@ -492,7 +500,16 @@ export class AgentEngine {
       },
     }));
 
-    return [...builtinForLLM, ...skillToolsForLLM];
+    const allTools = [...builtinForLLM, ...skillToolsForLLM];
+
+    this.logger.debug('工具汇总', {
+      builtinCount: builtinForLLM.length,
+      skillCount: skillToolsForLLM.length,
+      totalCount: allTools.length,
+      permLevel,
+    });
+
+    return allTools;
   }
 
   /**

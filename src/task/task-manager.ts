@@ -1554,11 +1554,18 @@ ${existingVotesText}
       durationMs: result.durationMs,
     });
 
-    // 更新状态机
+    // 更新状态机（使用 tryTransition 避免超时后状态转换异常）
+    const currentStatus = this.stateMachine.getStatus(taskId);
     if (result.status === 'completed') {
-      this.stateMachine.transition(taskId, 'completed');
+      const transitioned = this.stateMachine.tryTransition(taskId, 'completed');
+      if (!transitioned && currentStatus === 'timeout') {
+        this.logger.info(`任务超时后实际完成 [${taskId}]`);
+      }
     } else {
-      this.stateMachine.transition(taskId, 'failed', result.error);
+      const transitioned = this.stateMachine.tryTransition(taskId, 'failed', result.error);
+      if (!transitioned && currentStatus === 'timeout') {
+        this.logger.info(`任务超时后实际失败 [${taskId}]`, { error: result.error });
+      }
     }
 
     // 上报到平台 API

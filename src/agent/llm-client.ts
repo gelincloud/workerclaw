@@ -1,17 +1,27 @@
 /**
  * LLM 客户端
  * 
- * 支持 OpenAI 兼容 API 的 LLM 调用客户端
- * 支持：DeepSeek、OpenAI、GLM 等兼容 API
+ * 支持多种 LLM 提供商的统一调用客户端
+ * 通过提供商适配器自动处理不同 API 格式差异
+ * 
+ * 支持的提供商：
+ * - OpenAI 兼容（OpenAI、DeepSeek、GLM、NVIDIA NIM、通义千问、Moonshot 等）
+ * - Anthropic Claude
+ * - Google Gemini
  */
 
 import { createLogger, type Logger } from '../core/logger.js';
 import type { LLMConfig } from '../core/config.js';
 import type { LLMMessage, LLMResponse, ToolCall, ToolDefinition } from '../types/agent.js';
+import {
+  createProviderAdapter,
+  type LLMProviderAdapter,
+  type ToolDef,
+} from './llm-provider.js';
 
 export interface ChatRequest {
   messages: LLMMessage[];
-  tools?: ToolDefinition[];
+  tools?: ToolDef[];
   maxTokens?: number;
   temperature?: number;
 }
@@ -19,10 +29,19 @@ export interface ChatRequest {
 export class LLMClient {
   private logger: Logger;
   private config: LLMConfig;
+  private adapter: LLMProviderAdapter;
 
   constructor(config: LLMConfig) {
     this.config = config;
     this.logger = createLogger('LLMClient');
+    // 自动检测并创建对应的提供商适配器
+    this.adapter = createProviderAdapter(config.baseUrl, config.model);
+    
+    this.logger.info('LLM 客户端初始化', {
+      model: config.model,
+      baseUrl: config.baseUrl,
+      providerType: this.adapter.type,
+    });
   }
 
   /**
@@ -36,46 +55,29 @@ export class LLMClient {
       temperature = this.config.safety.temperature,
     } = request;
 
-    // 构建请求体
-    const body: any = {
-      model: this.config.model,
-      messages: messages.map(m => this.formatMessage(m)),
-      max_tokens: maxTokens,
-      temperature,
-      top_p: this.config.safety.topP,
-    };
+    // 构建请求体（由适配器处理格式差异）
+    const body = this.adapter.buildRequestBody(
+      messages,
+      tools,
+      this.config,
+      maxTokens,
+      temperature
+    );
 
-    // 工具定义（过滤掉没有 name 的工具）
-    if (tools && tools.length > 0) {
-      const validTools = tools.filter(t => t.name && t.name.trim());
-      if (validTools.length > 0) {
-        body.tools = validTools.map(t => ({
-          type: 'function',
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters,
-          },
-        }));
-
-        // 关键修复：显式设置 tool_choice 让模型知道应该调用工具
-        // "auto" - 让模型自主决定是否调用工具（默认值，但显式设置可避免某些模型的歧义行为）
-        // 某些模型（如 glm-4）在不设置 tool_choice 时，会将工具调用以文本形式输出而不是真正调用
-        body.tool_choice = 'auto';
-      }
-    }
-
+    // 调试日志
     this.logger.debug('LLM 请求', {
+      provider: this.adapter.type,
       model: this.config.model,
       messageCount: messages.length,
       toolCount: tools?.length || 0,
+      hasTools: !!(body.tools || body.functionDeclarations),
     });
 
     // 带重试的请求
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= this.config.retry.maxRetries; attempt++) {
       try {
-        const result = await this.doRequest(body);
+        const result = await this.adapter.sendRequest(body, this.config, this.logger);
 
         return {
           content: result.content || '',
@@ -101,94 +103,6 @@ export class LLMClient {
   }
 
   /**
-   * 发送 HTTP 请求
-   */
-  private async doRequest(body: any): Promise<{
-    content: string;
-    toolCalls: ToolCall[];
-    usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
-    model: string;
-    finishReason: string;
-  }> {
-    const url = `${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000), // 2 分钟超时
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`LLM API 错误 (${response.status}): ${errorText.slice(0, 500)}`);
-    }
-
-    const data = await response.json() as any;
-
-    // 解析响应
-    const choice = data.choices?.[0];
-    if (!choice) {
-      throw new Error('LLM API 返回格式异常：缺少 choices');
-    }
-
-    const message = choice.message || {};
-
-    // 解析工具调用
-    const toolCalls: ToolCall[] = (message.tool_calls || []).map((tc: any) => ({
-      id: tc.id,
-      name: tc.function?.name || tc.name,
-      arguments: tc.function?.arguments || tc.arguments || '{}',
-    }));
-
-    return {
-      content: message.content || '',
-      toolCalls,
-      usage: data.usage ? {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
-      } : undefined,
-      model: data.model || this.config.model,
-      finishReason: choice.finish_reason || 'stop',
-    };
-  }
-
-  /**
-   * 格式化消息
-   */
-  private formatMessage(msg: LLMMessage): any {
-    const formatted: any = {
-      role: msg.role,
-      content: msg.content,
-    };
-
-    if (msg.name) {
-      formatted.name = msg.name;
-    }
-
-    if (msg.tool_calls) {
-      formatted.tool_calls = msg.tool_calls.map(tc => ({
-        id: tc.id,
-        type: 'function',
-        function: {
-          name: tc.name,
-          arguments: tc.arguments,
-        },
-      }));
-    }
-
-    if (msg.tool_call_id) {
-      formatted.tool_call_id = msg.tool_call_id;
-    }
-
-    return formatted;
-  }
-
-  /**
    * 简单文本聊天（无工具调用）
    */
   async simpleChat(systemPrompt: string, userMessage: string): Promise<string> {
@@ -201,7 +115,17 @@ export class LLMClient {
     return response.content;
   }
 
+  /**
+   * 获取当前提供商类型
+   */
+  getProviderType(): string {
+    return this.adapter.type;
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
+
+// 重新导出类型以保持兼容性
+export type { ToolDef } from './llm-provider.js';

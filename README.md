@@ -167,6 +167,107 @@ npx workerclaw start --config config.json
 
 完整配置示例见 [`workerclaw.config.example.json`](./workerclaw.config.example.json)。
 
+### 支持的 LLM 提供商
+
+WorkerClaw 支持多种主流大语言模型，自动检测并适配工具调用格式：
+
+#### OpenAI 兼容格式（自动适配）
+
+| 提供商 | 模型示例 | API 基地址 | 备注 |
+|--------|----------|------------|------|
+| **OpenAI** | GPT-4, GPT-4o, GPT-3.5-turbo | `https://api.openai.com/v1` | 默认 `tool_choice: auto` |
+| **DeepSeek** | DeepSeek-V3, DeepSeek-R1 | `https://api.deepseek.com` | 支持 tool_choice |
+| **智谱 GLM** | GLM-4, GLM-5, GLM-4.7-Flash | `https://open.bigmodel.cn/api/paas/v4` | 需显式设置 tool_choice |
+| **通义千问** | Qwen-Plus, Qwen-Turbo, Qwen-Max | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 支持强制指定工具 |
+| **Kimi/Moonshot** | Kimi-K2.5, Moonshot-V1 | `https://api.moonshot.cn/v1` | 最多 128 个工具 |
+| **NVIDIA NIM** | 各种模型 | `https://integrate.api.nvidia.com/v1` | 默认 `tool_choice: none`，必须显式设置 |
+| **豆包 Doubao** | Doubao-Pro, Doubao-Lite | `https://ark.cn-beijing.volces.com/api/v3` | 火山引擎 |
+| **百川 Baichuan** | Baichuan2-Turbo, Baichuan4 | `https://api.baichuan-ai.com/v1` | 支持搜索增强 |
+| **MiniMax** | MiniMax-M1, MiniMax-M2 | `https://api.minimax.chat/v1` | 支持思维链 |
+| **xAI Grok** | Grok-2, Grok-3 | `https://api.x.ai/v1` | 支持 Function Calling |
+| **SiliconFlow** | 各种开源模型 | `https://api.siliconflow.cn/v1` | 模型丰富 |
+| **零一万物 Yi** | Yi-Large, Yi-Medium | `https://api.lingyiwanwu.com/v1` | 国产模型 |
+| **书生浦语** | InternLM2 | - | 上海AI实验室 |
+
+#### 特殊格式（独立适配）
+
+| 提供商 | 模型示例 | API 格式 | 备注 |
+|--------|----------|----------|------|
+| **Anthropic Claude** | Claude-3.5-Sonnet, Claude-3-Opus | Anthropic 格式 | `input_schema` + `tool_use` |
+| **Google Gemini** | Gemini-2.0-Flash, Gemini-1.5-Pro | Gemini 格式 | `functionDeclarations` + `functionCall` |
+
+#### 待支持
+
+| 提供商 | 模型示例 | 状态 | 备注 |
+|--------|----------|------|------|
+| **讯飞星火** | Spark-Max, Spark-4.0-Ultra | 部分支持 | 原生使用 WebSocket，建议通过阿里云百炼代理调用 |
+
+### 自动检测机制
+
+WorkerClaw 会根据 `baseUrl` 和 `model` 名称自动识别提供商类型：
+
+```javascript
+// 自动检测：Claude
+{ baseUrl: "https://api.anthropic.com", model: "claude-3-sonnet" }
+
+// 自动检测：Gemini
+{ baseUrl: "https://generativelanguage.googleapis.com", model: "gemini-2.0-flash" }
+
+// 自动检测：DeepSeek
+{ baseUrl: "https://api.deepseek.com", model: "deepseek-chat" }
+
+// 自动检测：智谱 GLM
+{ baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4" }
+
+// 其他情况默认为 OpenAI 兼容格式
+```
+
+### 配置示例
+
+**DeepSeek 配置：**
+```json
+{
+  "llm": {
+    "baseUrl": "https://api.deepseek.com",
+    "model": "deepseek-chat",
+    "apiKey": "${DEEPSEEK_API_KEY}"
+  }
+}
+```
+
+**智谱 GLM 配置：**
+```json
+{
+  "llm": {
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "model": "glm-4-flash",
+    "apiKey": "${GLM_API_KEY}"
+  }
+}
+```
+
+**Claude 配置：**
+```json
+{
+  "llm": {
+    "baseUrl": "https://api.anthropic.com",
+    "model": "claude-3-5-sonnet-20241022",
+    "apiKey": "${ANTHROPIC_API_KEY}"
+  }
+}
+```
+
+**Gemini 配置：**
+```json
+{
+  "llm": {
+    "baseUrl": "https://generativelanguage.googleapis.com",
+    "model": "gemini-2.0-flash-exp",
+    "apiKey": "${GOOGLE_API_KEY}"
+  }
+}
+```
+
 **核心配置项：**
 
 | 字段 | 说明 | 示例 |

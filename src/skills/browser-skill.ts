@@ -316,58 +316,107 @@ export class BrowserSkill implements Skill {
       this.activePages.delete(taskId);
     }
 
-    const result = await this.sandbox.navigate(url, {
-      waitFor,
-      extractText: true,
-      screenshot: screenshot || false,
-      workDir: context.workDir,
-    }, taskId || undefined);
+    // 创建新页面用于导航
+    let page: any = null;
+    try {
+      const session = await this.sessionManager.getOrCreate(taskId || '__no_session__');
+      page = await session.context.newPage();
 
-    if (!result.success) {
+      // 导航到目标 URL
+      const response = await page.goto(url, {
+        timeout: this.sandbox['config']?.pageTimeoutMs || 30000,
+        waitUntil: 'domcontentloaded',
+      });
+
+      if (!response || response.status() >= 400) {
+        const errorMsg = `HTTP ${response?.status() || '无响应'}`;
+        try { await page.close().catch(() => {}); } catch {}
+        return {
+          toolCallId,
+          success: false,
+          content: `导航失败: ${errorMsg}`,
+          error: errorMsg,
+        };
+      }
+
+      // 等待可选条件
+      if (waitFor) {
+        try {
+          await page.waitForSelector(waitFor, { timeout: 5000 });
+        } catch {
+          this.logger.debug(`等待选择器超时: ${waitFor}`);
+        }
+      }
+
+      // 提取页面内容
+      const title = await page.title();
+      const extractFn = `() => {
+        const removeSelectors = ['script', 'style', 'nav', 'header', 'footer',
+          'iframe', 'noscript', '[role="navigation"]', '[role="banner"]',
+          '[role="contentinfo"]', '.ad', '.advertisement', '.sidebar',
+          '.cookie-banner', '.popup', '.modal'];
+        for (const sel of removeSelectors) {
+          for (const el of document.querySelectorAll(sel)) {
+            el.remove();
+          }
+        }
+        const main = document.querySelector('main') ||
+          document.querySelector('article') ||
+          document.querySelector('[role="main"]') ||
+          document.body;
+        if (!main) return '';
+        const text = main.innerText || main.textContent || '';
+        return text.replace(/\\n{3,}/g, '\\n\\n').replace(/[ \\t]+/g, ' ').trim();
+      }`;
+      const content = await page.evaluate(extractFn) || '';
+
+      // 截图（如果需要）
+      let screenshotPath: string | undefined;
+      if (screenshot) {
+        const shotResult = await this.sandbox['internalScreenshot']?.(page, context.workDir);
+        if (shotResult?.success) {
+          screenshotPath = shotResult.path;
+        }
+      }
+
+      // 保存活跃页面供后续交互使用
+      if (taskId) {
+        this.activePages.set(taskId, page);
+      } else {
+        // 无 taskId 的一次性访问，关闭页面
+        try { await page.close().catch(() => {}); } catch {}
+      }
+
+      const output = [
+        `标题: ${title}`,
+        `URL: ${page.url()}`,
+        '',
+        content.slice(0, 5000),  // 截断过长内容
+      ].join('\n');
+
+      if (screenshotPath) {
+        return {
+          toolCallId,
+          success: true,
+          content: output + `\n\n📸 截图已保存: ${screenshotPath}`,
+        };
+      }
+
+      return { toolCallId, success: true, content: output };
+
+    } catch (err) {
+      const error = err as Error;
+      this.logger.error('导航失败', { url, error: error.message });
+      if (page) {
+        try { await page.close().catch(() => {}); } catch {}
+      }
       return {
         toolCallId,
         success: false,
-        content: `导航失败: ${result.error}`,
-        error: result.error,
+        content: `导航失败: ${error.message}`,
+        error: error.message,
       };
     }
-
-    // 保留该任务的活跃 page 用于后续交互
-    // 通过 sessionManager 获取会话并创建 page
-    if (taskId) {
-      try {
-        const session = await this.sessionManager.getOrCreate(taskId);
-        const page = await session.context.newPage();
-        const response = await page.goto(url, {
-          timeout: this.sandbox['config']?.pageTimeoutMs || 30000,
-          waitUntil: 'domcontentloaded',
-        });
-        if (response && response.status() < 400) {
-          this.activePages.set(taskId, page);
-        } else {
-          try { await page.close().catch(() => {}); } catch {}
-        }
-      } catch (err) {
-        this.logger.debug('创建活跃页面失败', { error: (err as Error).message });
-      }
-    }
-
-    const output = [
-      `标题: ${result.title}`,
-      `URL: ${result.url}`,
-      '',
-      result.content,
-    ].join('\n');
-
-    if (result.screenshotPath) {
-      return {
-        toolCallId,
-        success: true,
-        content: output + `\n\n📸 截图已保存: ${result.screenshotPath}`,
-      };
-    }
-
-    return { toolCallId, success: true, content: output };
   }
 
   private async executeExtract(params: any, context: any): Promise<any> {

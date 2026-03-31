@@ -247,11 +247,11 @@ export class BrowserSandbox {
           return text.replace(/\\n{3,}/g, '\\n\\n').replace(/[ \\t]+/g, ' ').trim();
         }`;
 
-        content = await page.evaluate(extractFn);
+        content = await page.evaluate(extractFn) || '';
 
         // 截断过大内容
         const maxChars = this.config.maxPageSizeKB * 512;
-        if (content.length > maxChars) {
+        if (content && content.length > maxChars) {
           content = content.slice(0, maxChars) + '\n\n[... 内容过长，已截断]';
         }
       }
