@@ -860,40 +860,31 @@ export class TaskManager {
     senderId: string,
   ): Promise<{ action: string; message: string } | null> {
     try {
-      const systemPrompt = `你是一个意图检测助手。分析用户的消息，判断是否包含以下意图之一：
+      // 快速正则检测（不调用 LLM，避免超时）
+      const cancelKeywords = /撤销|取消|放弃|退单|不要了|不做了/;
+      const progressKeywords = /进度|进展|怎么样了|做完了吗|完成了吗|任务状态|什么时候能好/;
+      const priceKeywords = /多少钱|什么价|费用|价格|报价|收费|报酬|成本|贵不贵|便宜|砍价|能便宜吗|优惠|我出.*元|我出.*块/;
 
-1. cancel_task - 撤销/放弃/取消已接取的任务
-   关键词：撤销、取消、放弃、不要了、不做了、退单
+      // 如果明确匹配某个意图，直接执行（不需要 LLM）
+      let detectedIntent: string | null = null;
 
-2. check_progress - 查询任务进度
-   关键词：进度、进展、怎么样了、做了吗、完成了吗、查一下进度、任务状态、什么时候能好
+      if (cancelKeywords.test(content)) {
+        detectedIntent = 'cancel_task';
+      } else if (progressKeywords.test(content)) {
+        detectedIntent = 'check_progress';
+      } else if (priceKeywords.test(content)) {
+        detectedIntent = 'price_inquiry';
+      }
 
-3. price_inquiry - 价格/费用/报酬咨询
-   关键词：多少钱、费用、价格、报价、什么价、收费、报酬、成本、贵不贵、便宜、砍价、讨价还价、能便宜吗、优惠
-   也包括用户给出一个价格说"X元做XX"这种还价场景
+      // 只有在不明确时才调用 LLM（目前所有情况都能用正则判断，可以跳过 LLM）
+      // 如果未来需要更复杂的意图检测，可以在这里调用 LLM
 
-如果没有检测到明确意图，返回 null。
-
-返回格式（严格JSON，不要输出其他内容）：
-{"intent": "cancel_task" 或 "check_progress" 或 "price_inquiry" 或 null, "confidence": 0到1}`;
-
-      const result = await this.agentEngine.generateReply(
-        systemPrompt,
-        `用户消息: "${content}"\n\n请检测意图：`,
-      );
-
-      if (!result) return null;
-
-      const jsonMatch = result.match(/\{[\s\S]*?\}/);
-      if (!jsonMatch) return null;
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (!parsed.intent || (typeof parsed.confidence === 'number' && parsed.confidence < 0.7)) {
+      if (!detectedIntent) {
         return null;
       }
 
       // 执行意图
-      if (parsed.intent === 'cancel_task') {
+      if (detectedIntent === 'cancel_task') {
         // 查找已接单但未完成的任务（accepted 或 running 状态）
         const taskIds = this.stateMachine.getActiveTaskIds();
         const cancellableTasks: Array<{ id: string; status: string; data?: any }> = [];
@@ -953,7 +944,7 @@ export class TaskManager {
         };
       }
 
-      if (parsed.intent === 'check_progress') {
+      if (detectedIntent === 'check_progress') {
         const status = this.getStatus();
         if (status.runningTasks > 0) {
           return {
@@ -970,7 +961,7 @@ export class TaskManager {
         return { action: 'check_progress', message: '目前没有正在执行中的任务哦，您可以随时发任务给我！' };
       }
 
-      if (parsed.intent === 'price_inquiry') {
+      if (detectedIntent === 'price_inquiry') {
         // 价格咨询 → 转到专门的估价处理
         const priceReply = await this.handlePriceInquiry(content);
         return { action: 'price_inquiry', message: priceReply };
