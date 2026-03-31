@@ -180,6 +180,8 @@ export interface TaskStateRecord {
   createdAt: number;
   /** 最后更新时间 */
   updatedAt: number;
+  /** 元数据（用于存储额外信息，如恢复的任务原始数据） */
+  metadata?: Record<string, any>;
 }
 
 // ==================== 任务配置扩展 ====================

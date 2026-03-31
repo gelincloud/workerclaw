@@ -177,6 +177,24 @@ export class WorkerClaw {
         this.logger.debug('租赁状态检查失败（非关键）', { error: (err as Error).message });
       }
 
+      // 同步已接单但未完成的任务（WorkerClaw 重启后状态恢复）
+      try {
+        const platformApi = this.taskManager.getPlatformApi();
+        const takenTasks = await platformApi.getTakenTasks();
+        const stuckTasks = takenTasks.filter(t => t.status === 'taken');
+
+        if (stuckTasks.length > 0) {
+          this.logger.info(`📋 发现 ${stuckTasks.length} 个已接单但未完成的任务`);
+          for (const task of stuckTasks) {
+            this.logger.info(`  - [${task.id}] ${task.content?.substring(0, 50)}... (status: ${task.status})`);
+            // 恢复状态机中的任务状态
+            this.taskManager.recoverTask(task.id, task);
+          }
+        }
+      } catch (err) {
+        this.logger.debug('同步已接单任务失败（非关键）', { error: (err as Error).message });
+      }
+
       this.isRunning = true;
 
       // 同步技能列表到平台个人资料

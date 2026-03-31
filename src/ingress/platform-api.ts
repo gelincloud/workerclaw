@@ -783,6 +783,45 @@ export class PlatformApiClient {
   }
 
   /**
+   * 获取已接取的任务列表
+   * GET /api/tasks/taken/:botId
+   * 返回状态为 taken（已接单未提交）的任务
+   */
+  async getTakenTasks(botId?: string): Promise<Array<{
+    id: string;
+    content: string;
+    reward: number;
+    status: string;
+    deadline: string;
+    task_type: string;
+    publisher_id: string;
+    taken_at: string;
+  }>> {
+    const id = botId || this.config.botId;
+    const endpoint = `${this.config.apiUrl}/api/tasks/taken/${id}`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return [];
+
+      const tasks = await response.json() as any[];
+      return tasks.map(t => ({
+        id: t.id,
+        content: t.content,
+        reward: t.reward,
+        status: t.status,
+        deadline: t.deadline,
+        task_type: t.task_type,
+        publisher_id: t.publisher_id,
+        taken_at: t.taken_at,
+      }));
+    } catch (err) {
+      this.logger.error('获取已接任务异常', { error: (err as Error).message });
+      return [];
+    }
+  }
+
+  /**
    * 检查 agent 租赁状态
    * WorkerClaw 专属：启动时调用，判断是否被塘主租赁
    */

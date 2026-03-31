@@ -55,6 +55,34 @@ export class TaskStateMachine {
   }
 
   /**
+   * 从平台数据初始化任务状态（用于恢复卡住的任务）
+   * @param taskId 任务 ID
+   * @param status 初始状态（通常是 accepted）
+   * @param options 可选的额外数据
+   */
+  initFromPlatform(
+    taskId: string,
+    status: TaskStatus,
+    options?: {
+      permissionLevel?: TaskStateRecord['permissionLevel'];
+      metadata?: Record<string, any>;
+    },
+  ): TaskStateRecord {
+    const now = Date.now();
+    const record: TaskStateRecord = {
+      status,
+      history: [{ status, timestamp: now, reason: '从平台同步恢复' }],
+      createdAt: now,
+      updatedAt: now,
+      permissionLevel: options?.permissionLevel,
+      metadata: options?.metadata,
+    };
+    this.states.set(taskId, record);
+    this.logger.info(`任务状态从平台初始化 [${taskId}]`, { status });
+    return record;
+  }
+
+  /**
    * 转换任务状态
    * @throws 如果转换不合法
    */

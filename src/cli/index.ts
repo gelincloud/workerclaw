@@ -345,12 +345,104 @@ const main = defineCommand({
         await import('./sections/experience.js').then(m => m.manageExperience(args.action as string, args.target as string, args['config-file'] as string));
       },
     }),
+
+    // 任务管理命令
+    tasks: defineCommand({
+      meta: {
+        name: 'tasks',
+        description: '任务管理（查看已接单/清理卡住的任务）',
+      },
+      args: {
+        action: {
+          type: 'positional',
+          required: false,
+          description: '操作 (list/cancel)',
+        },
+        target: {
+          type: 'positional',
+          required: false,
+          description: '任务 ID（cancel 时使用）',
+        },
+        'config-file': {
+          type: 'string',
+          description: '配置文件路径',
+          alias: 'c',
+        },
+      },
+      async run({ args }) {
+        const configPath = findConfigPath(args['config-file'] as string);
+
+        if (!configPath) {
+          console.error('❌ 未找到配置文件');
+          console.error('   运行 workerclaw configure 进行配置');
+          process.exit(1);
+        }
+
+        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+        const { PlatformApiClient } = await import('../ingress/platform-api.js');
+
+        const platformApi = new PlatformApiClient(config.platform);
+
+        const action = args.action as string || 'list';
+
+        if (action === 'list') {
+          console.log('📋 正在获取已接单任务...\n');
+
+          try {
+            const tasks = await platformApi.getTakenTasks();
+            const stuckTasks = tasks.filter(t => t.status === 'taken');
+
+            if (stuckTasks.length === 0) {
+              console.log('✅ 没有卡住的任务');
+              return;
+            }
+
+            console.log(`⚠️  发现 ${stuckTasks.length} 个已接单但未执行的任务:\n`);
+            for (const task of stuckTasks) {
+              console.log(`  📌 [${task.id}]`);
+              console.log(`     内容: ${task.content?.substring(0, 60)}...`);
+              console.log(`     报酬: ${task.reward} 虾晶`);
+              console.log(`     接单时间: ${task.taken_at || '未知'}`);
+              console.log('');
+            }
+            console.log('💡 如需取消某个任务，运行:');
+            console.log('   workerclaw tasks cancel <任务ID>');
+          } catch (err: any) {
+            console.error(`❌ 获取任务失败: ${err.message}`);
+          }
+        } else if (action === 'cancel') {
+          const taskId = args.target as string;
+          if (!taskId) {
+            console.error('❌ 请指定任务 ID');
+            console.error('   workerclaw tasks cancel <任务ID>');
+            process.exit(1);
+          }
+
+          console.log(`🗑️  正在取消任务 [${taskId}]...`);
+
+          try {
+            const result = await platformApi.cancelTake(taskId);
+            if (result.success) {
+              console.log(`✅ 已取消任务 [${taskId}]`);
+            } else {
+              console.error(`❌ 取消失败: ${result.error}`);
+            }
+          } catch (err: any) {
+            console.error(`❌ 取消任务异常: ${err.message}`);
+          }
+        } else {
+          console.log('用法:');
+          console.log('  workerclaw tasks list         查看已接单任务');
+          console.log('  workerclaw tasks cancel <ID>  取消指定任务');
+        }
+      },
+    }),
   },
 
   // 默认行为：如果没有子命令，显示帮助
   async run({ rawArgs }) {
     // citty 会先执行子命令再执行主命令 run，需要检测是否已有子命令被处理
-    const knownSubCommands = ['configure', 'start', 'status', 'token', 'skills', 'experience'];
+    const knownSubCommands = ['configure', 'start', 'status', 'token', 'skills', 'experience', 'tasks'];
     if (rawArgs.length > 0 && knownSubCommands.includes(rawArgs[0])) {
       return; // 子命令已处理，不再输出帮助
     }
@@ -361,6 +453,7 @@ const main = defineCommand({
     console.log('  workerclaw start                  启动 WorkerClaw');
     console.log('  workerclaw status                 查看状态');
     console.log('  workerclaw token                  查看 Token（网页登录用）');
+    console.log('  workerclaw tasks [list|cancel]    任务管理');
     console.log('  workerclaw skills [list|install|uninstall]  技能管理');
     console.log('  workerclaw experience [list|search|stats|events]  经验基因系统');
     console.log('');

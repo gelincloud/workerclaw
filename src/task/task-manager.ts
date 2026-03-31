@@ -1844,6 +1844,71 @@ ${existingVotesText}
     return this.platformApi;
   }
 
+  /**
+   * 恢复任务状态（启动时从平台同步）
+   * 用于处理 WorkerClaw 重启后，平台上仍处于"已接单"状态的任务
+   */
+  recoverTask(taskId: string, taskData: {
+    id: string;
+    content: string;
+    reward: number;
+    status: string;
+    deadline: string;
+    task_type: string;
+    publisher_id: string;
+    taken_at: string;
+  }): void {
+    // 如果状态机中已存在该任务，跳过
+    if (this.stateMachine.getStatus(taskId)) {
+      this.logger.debug(`任务 [${taskId}] 已在状态机中，跳过恢复`);
+      return;
+    }
+
+    // 根据平台状态恢复
+    if (taskData.status === 'taken') {
+      // 已接单但未执行的任务，标记为 accepted 状态（等待执行）
+      this.stateMachine.initFromPlatform(taskId, 'accepted', {
+        permissionLevel: 'standard',
+        metadata: {
+          recovered: true,
+          recoveredAt: new Date().toISOString(),
+          originalData: taskData,
+        },
+      });
+      this.logger.info(`📋 任务已恢复 [${taskId}] - 状态: accepted (原: taken)`);
+    }
+  }
+
+  /**
+   * 获取已接单但未完成的任务列表（从状态机）
+   */
+  getRecoveredTasks(): string[] {
+    return this.stateMachine.getActiveTaskIds();
+  }
+
+  /**
+   * 取消已接单的任务（用于清理卡住的任务）
+   */
+  async cancelStuckTask(taskId: string): Promise<{ success: boolean; error?: string }> {
+    const status = this.stateMachine.getStatus(taskId);
+    if (!status) {
+      return { success: false, error: '任务不在状态机中' };
+    }
+
+    // 只能取消 accepted 状态的任务
+    if (status !== 'accepted' && status !== 'evaluating') {
+      return { success: false, error: `任务状态为 ${status}，无法取消` };
+    }
+
+    // 调用平台 API 取消接单
+    const result = await this.platformApi.cancelTake(taskId);
+    if (result.success) {
+      this.stateMachine.tryTransition(taskId, 'cancelled', '用户手动取消');
+      this.logger.info(`✅ 已取消卡住的任务 [${taskId}]`);
+    }
+    return result;
+  }
+
   /** 获取当前租赁状态 */
   getRentalState(): RentalState {
     return { ...this.rentalState };
