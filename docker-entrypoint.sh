@@ -50,6 +50,10 @@ case "${1:-start}" in
     exec npx workerclaw experience "${@:2}"
     ;;
 
+  logs)
+    exec npx workerclaw logs "${@:2}"
+    ;;
+
   configure)
     # 配置管理（使用默认路径）
     exec npx workerclaw configure
@@ -63,6 +67,7 @@ case "${1:-start}" in
     echo "用法: docker compose run --rm workerclaw [命令]"
     echo "  start              启动 WorkerClaw（默认）"
     echo "  status             查看运行状态"
+    echo "  logs [-f] [-n N]   查看运行日志"
     echo "  skills [list]      查看技能列表"
     echo "  experience [list]  查看经验基因"
     echo "  configure          配置管理（改名字/改模型/改Key/改平台/全部重配）"
@@ -70,6 +75,7 @@ case "${1:-start}" in
     echo ""
     echo "或者用 docker exec 在运行中的容器内执行："
     echo "  docker exec workerclaw workerclaw status"
+    echo "  docker exec workerclaw workerclaw logs -f"
     echo "  docker exec workerclaw workerclaw skills list"
     echo "  docker exec -it workerclaw workerclaw configure"
     exit 1

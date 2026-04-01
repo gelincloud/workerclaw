@@ -393,6 +393,21 @@ export function mergeConfig(
     llm: {
       ...((base as any).llm || {}),
       ...((overrides as any).llm || {}),
+      // 合并 safety 配置
+      safety: {
+        maxTokens: 4000,
+        temperature: 0.7,
+        topP: 0.9,
+        ...((base as any).llm?.safety || {}),
+        ...((overrides as any).llm?.safety || {}),
+      },
+      // 合并 retry 配置
+      retry: {
+        maxRetries: 3,
+        backoffMs: 1000,
+        ...((base as any).llm?.retry || {}),
+        ...((overrides as any).llm?.retry || {}),
+      },
       // 传递 LLM 超时配置（从 task.timeout 继承）
       timeout: {
         llmTimeoutMs: DEFAULT_CONFIG.task.timeout.llmTimeoutMs,

@@ -346,6 +346,93 @@ const main = defineCommand({
       },
     }),
 
+    // 日志查看命令
+    logs: defineCommand({
+      meta: {
+        name: 'logs',
+        description: '查看 WorkerClaw 运行日志（Docker 容器内使用）',
+      },
+      args: {
+        lines: {
+          type: 'string',
+          description: '显示行数',
+          alias: 'n',
+          default: '100',
+        },
+        follow: {
+          type: 'boolean',
+          description: '实时跟踪日志',
+          alias: 'f',
+          default: false,
+        },
+      },
+      async run({ args }) {
+        const { execSync, spawn } = await import('node:child_process');
+        const lines = parseInt(args.lines as string) || 100;
+        const follow = args.follow as boolean;
+
+        // 检查是否在 Docker 容器内
+        const isDocker = existsSync('/.dockerenv') || existsSync('/proc/1/cgroup');
+
+        if (isDocker) {
+          // 在容器内，直接查看 pm2 日志或 stdout
+          const pm2LogPath = '/root/.pm2/logs/workerclaw-out.log';
+          const pm2ErrPath = '/root/.pm2/logs/workerclaw-error.log';
+
+          if (follow) {
+            // 实时跟踪模式
+            console.log('📋 实时日志（Ctrl+C 退出）:\n');
+            try {
+              // 使用 tail -f 跟踪日志
+              const tail = spawn('tail', ['-f', '-n', String(lines), pm2LogPath, pm2ErrPath], {
+                stdio: 'inherit',
+              });
+              tail.on('error', (err) => {
+                console.error('❌ 无法读取日志:', err.message);
+                console.log('提示: 如果使用 docker logs，请在宿主机运行:');
+                console.log('  docker logs -f <container_name>');
+              });
+            } catch {
+              console.log('提示: 在宿主机上运行 docker logs -f <container_name> 查看实时日志');
+            }
+          } else {
+            // 显示最近日志
+            console.log(`📋 最近 ${lines} 行日志:\n`);
+            try {
+              const stdout = execSync(`tail -n ${lines} ${pm2LogPath} 2>/dev/null || echo "(无 stdout 日志)"`, { encoding: 'utf-8' });
+              const stderr = execSync(`tail -n ${Math.floor(lines / 2)} ${pm2ErrPath} 2>/dev/null || echo ""`, { encoding: 'utf-8' });
+
+              if (stdout) {
+                console.log('--- STDOUT ---');
+                console.log(stdout);
+              }
+              if (stderr) {
+                console.log('--- STDERR ---');
+                console.log(stderr);
+              }
+            } catch {
+              console.log('提示: 在宿主机上运行 docker logs <container_name> 查看日志');
+            }
+          }
+        } else {
+          // 不在容器内，提示用户使用 docker logs
+          console.log('📋 WorkerClaw 日志查看\n');
+          console.log('如果 WorkerClaw 运行在 Docker 容器中，请在宿主机运行:');
+          console.log('');
+          console.log('  # 查看最近 100 行日志');
+          console.log('  docker logs <container_name>');
+          console.log('');
+          console.log('  # 实时跟踪日志');
+          console.log('  docker logs -f <container_name>');
+          console.log('');
+          console.log('  # 查看更多行数');
+          console.log('  docker logs --tail 500 <container_name>');
+          console.log('');
+          console.log('💡 提示: 查找容器名称: docker ps | grep workerclaw');
+        }
+      },
+    }),
+
     // 任务管理命令
     tasks: defineCommand({
       meta: {
@@ -442,7 +529,7 @@ const main = defineCommand({
   // 默认行为：如果没有子命令，显示帮助
   async run({ rawArgs }) {
     // citty 会先执行子命令再执行主命令 run，需要检测是否已有子命令被处理
-    const knownSubCommands = ['configure', 'start', 'status', 'token', 'skills', 'experience', 'tasks'];
+    const knownSubCommands = ['configure', 'start', 'status', 'token', 'logs', 'skills', 'experience', 'tasks'];
     if (rawArgs.length > 0 && knownSubCommands.includes(rawArgs[0])) {
       return; // 子命令已处理，不再输出帮助
     }
@@ -453,6 +540,7 @@ const main = defineCommand({
     console.log('  workerclaw start                  启动 WorkerClaw');
     console.log('  workerclaw status                 查看状态');
     console.log('  workerclaw token                  查看 Token（网页登录用）');
+    console.log('  workerclaw logs [-f] [-n N]       查看运行日志');
     console.log('  workerclaw tasks [list|cancel]    任务管理');
     console.log('  workerclaw skills [list|install|uninstall]  技能管理');
     console.log('  workerclaw experience [list|search|stats|events]  经验基因系统');

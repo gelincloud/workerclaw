@@ -35,7 +35,8 @@
 - **安全审查**: 速率限制→来源验证→内容安全扫描→权限分级(read_only/limited/standard/elevated)
 - **沙箱**: 命令/文件系统/网络/浏览器(Process级轻量)
 - **设计文档**: `workerclaw-design.md`
-- **npm包**: `workerclaw`, 当前版本 0.13.4
+- **npm包**: `workerclaw`, 当前版本 0.13.14
+- **控制台**: https://www.miniabc.top/console.html (自助购买 Docker 实例)
 - **配置文件**: ~/.workerclaw/config.json
 
 ### OpenClaw 平台信息
@@ -43,6 +44,17 @@
 - **安装路径**: `/usr/local/lib/node_modules/@qingchencloud/openclaw-zh/`
 - **CLI**: `/usr/local/bin/openclaw`, 配置目录 `~/.openclaw/`
 - **Plugin SDK**: `openclaw/plugin-sdk/*` (子路径导入), 旧 `openclaw/extension-api` 已移除
+
+## WorkerClaw 控制台 (2026-03-31)
+
+- **地址**: https://www.miniabc.top/console.html
+- **功能**: 用户自助购买 WorkerClaw Docker 实例，支持启动/停止/重启/Web终端/日志查看
+- **套餐**: 体验版¥3.9/7天, 月付¥9.9/30天, 季付¥19.9/90天, 年付¥59/365天
+- **代码位置**: 智工坊项目 `/Users/admin/WorkBuddy/20260310201629/routes/console.js`
+- **实例目录**: `/root/bot-social/instances/`
+- **数据库表**: `wc_instances`, `wc_orders`
+- **WebSocket**: `/ws/console/terminal`, `/ws/console/logs`
+- **本地资源**: `/assets/fontawesome/`, `/assets/xterm/`
 
 ## WorkerClaw 版本历史 (2026-03-28)
 
@@ -110,6 +122,29 @@
 | v0.13.10 | 改进 cancel_task 意图: 多任务场景列出供用户选择+区分可取消(accepted/evaluating)与不可取消(running) |
 | v0.13.11 | 支持选择取消: 用户回复"取消1"取消指定任务+"取消全部"批量取消+handleCancelSelection方法 |
 | v0.13.12 | 优化意图检测: 正则快速匹配替代LLM调用,解决超时导致两次请求的问题 |
+| v0.13.13 | 单次LLM调用: 合并意图检测+回复生成,返回{intent,reply},避免多次调用 |
+| v0.13.14 | 私信意图优化: 任务选择操作("取消1"/"取消全部")提前处理,避免LLM干扰 |
+| v0.13.15 | 技能同步调试日志(botId/hasToken/tokenPrefix/skillsCount+响应body) |
+| v0.13.16 | Docker 配置路径统一(改用 ~/.workerclaw/config.json，与 CLI 一致，无需 -c 参数) |
+
+## 问题排查记录
+
+### 2026-04-01: Bot 不出现在聊天室 + 技能同步 401
+- **原因**: 配置文件中的 botId 不存在于数据库
+- **排查过程**:
+  1. 服务端日志显示 `广播在线人数: 3, 用户数: 2` → 说明有 botId 在 openclawClients 但不在数据库
+  2. 查询数据库确认 `0376ece7-60b5-4bde-bfc2-6fe677283d06` 不存在
+  3. `broadcastOnlineCount` 从数据库获取用户信息时跳过了不存在的 botId
+- **解决**: 重新运行 `workerclaw configure` 完全重新配置，注册新的 Bot 账号
+
+## WorkerClaw Docker 更新机制
+
+| 场景 | 操作 |
+|------|------|
+| npm 包更新（代码改动） | 只需重启容器 `docker restart workerclaw-wc_xxx` |
+| Dockerfile / entrypoint 改动 | 需要重新构建镜像 `docker build -t workerclaw:latest .` |
+
+**注意**: 容器启动时会 `npm install -g workerclaw` 自动拉取最新版，无需重新构建镜像。
 
 ## 智工坊服务端 API 备忘
 - 任务: POST /api/task/:id/take, POST /api/task/:id/submit, POST /api/task/:id/cancel-take, POST /api/task/:id/apply-arbitration
