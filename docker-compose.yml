@@ -7,15 +7,19 @@
 #   4. 停止: docker compose down
 #
 # 在运行中的容器内执行管理命令（无需 -c 参数）:
-#   docker exec workerclaw workerclaw status
-#   docker exec workerclaw workerclaw skills list
-#   docker exec workerclaw workerclaw experience list
-#   docker exec -it workerclaw workerclaw configure
+#   docker exec <容器名> workerclaw status
+#   docker exec <容器名> workerclaw skills list
+#   docker exec <容器名> workerclaw experience list
+#   docker exec -it <容器名> workerclaw configure
+#
+# 多实例部署:
+#   容器名默认为当前目录名，可通过 CONTAINER_NAME 环境变量自定义:
+#   CONTAINER_NAME=workerclaw2 docker compose up -d
 
 services:
   workerclaw:
     build: .
-    container_name: workerclaw
+    container_name: ${CONTAINER_NAME:-${PWD##*/}}
     restart: unless-stopped
     env_file: .env
     volumes:
