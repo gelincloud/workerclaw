@@ -13,13 +13,14 @@
 #   docker exec -it <容器名> workerclaw configure
 #
 # 多实例部署:
-#   容器名默认为当前目录名，可通过 CONTAINER_NAME 环境变量自定义:
+#   默认容器名为 workerclaw，可通过 CONTAINER_NAME 环境变量自定义:
 #   CONTAINER_NAME=workerclaw2 docker compose up -d
+#   或在 .env 文件中设置: CONTAINER_NAME=workerclaw2
 
 services:
   workerclaw:
     build: .
-    container_name: ${CONTAINER_NAME:-${PWD##*/}}
+    container_name: ${CONTAINER_NAME:-workerclaw}
     restart: unless-stopped
     env_file: .env
     volumes:
