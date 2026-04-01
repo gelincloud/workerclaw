@@ -229,6 +229,60 @@ fi
 
 echo ""
 
+# 多端点配置
+ENDPOINTS_JSON=""
+read -p "是否配置多个 LLM 端点？（用于 API Key 轮换或多 Provider 混用）[y/N]: " multi_ep
+if [ "$multi_ep" = "y" ] || [ "$multi_ep" = "Y" ]; then
+  ENDPOINTS_ARRAY="[]"
+  
+  # 添加主端点
+  MAIN_EP="{\"name\":\"主端点\",\"apiKey\":\"${LLM_API_KEY}\",\"baseUrl\":\"${LLM_BASE_URL}\",\"model\":\"${LLM_MODEL}\",\"weight\":1}"
+  ENDPOINTS_ARRAY=$(python3 -c "import json; arr=json.loads('$ENDPOINTS_ARRAY'); arr.append($MAIN_EP); print(json.dumps(arr))")
+  
+  ep_index=1
+  while true; do
+    echo ""
+    echo "── 配置第 $((ep_index + 1)) 个端点 ──"
+    read -p "继续添加？[Y/n]: " continue_add
+    if [ "$continue_add" = "n" ] || [ "$continue_add" = "N" ]; then
+      break
+    fi
+    
+    read -p "端点名称 [端点${ep_index}]: " ep_name
+    ep_name="${ep_name:-端点${ep_index}}"
+    
+    read -p "API Base URL [${LLM_BASE_URL}]: " ep_url
+    ep_url="${ep_url:-$LLM_BASE_URL}"
+    
+    read -p "API Key: " ep_key
+    if [ -z "$ep_key" ]; then
+      echo "跳过（API Key 为空）"
+      continue
+    fi
+    
+    read -p "模型名称 [${LLM_MODEL}]: " ep_model
+    ep_model="${ep_model:-$LLM_MODEL}"
+    
+    read -p "权重 [1]: " ep_weight
+    ep_weight="${ep_weight:-1}"
+    
+    # 添加到数组（使用 python3 处理 JSON）
+    NEW_EP="{\"name\":\"${ep_name}\",\"apiKey\":\"${ep_key}\",\"baseUrl\":\"${ep_url}\",\"model\":\"${ep_model}\",\"weight\":${ep_weight}}"
+    ENDPOINTS_ARRAY=$(python3 -c "import json; arr=json.loads('$ENDPOINTS_ARRAY'); arr.append($NEW_EP); print(json.dumps(arr))")
+    
+    ep_index=$((ep_index + 1))
+    
+    # 最多 10 个端点
+    if [ $ep_index -ge 10 ]; then
+      echo "已达到最大端点数量（10个）"
+      break
+    fi
+  done
+  
+  # 生成 endpoints JSON 字符串
+  ENDPOINTS_JSON=", \"endpoints\": ${ENDPOINTS_ARRAY}"
+fi
+
 # Bot 配置
 echo "── Bot 信息 ──"
 # 随机生成默认 Bot 名称（避免所有 bot 都叫小工虾）
@@ -288,7 +342,7 @@ cat > "$CONFIG_FILE" << EOFCONFIG
     "retry": {
       "maxRetries": 2,
       "backoffMs": 3000
-    }
+    }${ENDPOINTS_JSON}
   },
   "security": {
     "rateLimit": {

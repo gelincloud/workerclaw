@@ -2,9 +2,10 @@
  * WorkerClaw CLI - 大模型配置 section
  * 
  * 交互式配置 LLM 提供商、模型和 API Key
+ * 支持多 Provider 端点轮换
  */
 
-import { select, password, num, text } from '../prompter.js';
+import { select, password, num, text, confirm } from '../prompter.js';
 import type { LLMConfig } from '../../core/config.js';
 
 export interface LLMSectionResult {
@@ -54,6 +55,13 @@ const LLM_PROVIDERS: Record<string, {
     models: ['glm-4-flash', 'glm-4', 'glm-4-plus'],
     hint: '智谱 GLM-4 系列',
   },
+  nvidia: {
+    name: 'NVIDIA NIM',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    defaultModel: 'z-ai/glm5',
+    models: ['z-ai/glm5', 'meta/llama-3.1-8b-instruct', 'meta/llama-3.1-70b-instruct', 'mistralai/mistral-large'],
+    hint: 'NVIDIA NIM API（含免费 GLM5）',
+  },
   ollama: {
     name: 'Ollama (本地)',
     baseUrl: 'http://localhost:11434/v1',
@@ -69,6 +77,15 @@ const LLM_PROVIDERS: Record<string, {
     hint: '兼容 OpenAI API 格式的自定义服务',
   },
 };
+
+/** 单个端点配置 */
+interface EndpointConfig {
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  weight: number;
+}
 
 /**
  * 大模型配置
@@ -158,7 +175,113 @@ export async function configureLLM(existing?: Partial<LLMConfig>): Promise<LLMSe
   const temperature = await num('Temperature (创造性，0-2)', 0.7, 0, 2);
   if (temperature === null) return null;
 
-  return {
+  // ========== 多端点配置 ==========
+  const endpoints: EndpointConfig[] = [];
+  
+  // 询问是否配置多个端点（用于 API Key 轮换或多 Provider 混用）
+  const hasMultipleEndpoints = existing?.endpoints && existing.endpoints.length > 0;
+  const wantMultiple = await confirm(
+    '是否配置多个 LLM 端点？（用于 API Key 轮换或多 Provider 混用）',
+    hasMultipleEndpoints,
+  );
+  
+  if (wantMultiple) {
+    // 添加主端点
+    endpoints.push({
+      name: `${provider.name} 主端点`,
+      apiKey,
+      baseUrl,
+      model,
+      weight: 1,
+    });
+    
+    // 循环添加更多端点
+    let addMore = true;
+    let endpointIndex = 1;
+    
+    while (addMore) {
+      console.log(`\n── 配置第 ${endpointIndex + 1} 个端点 ──`);
+      
+      // 选择这个端点的提供商
+      const epProviderKey = await select(
+        '选择端点提供商',
+        Object.entries(LLM_PROVIDERS)
+          .filter(([key]) => !isLocal || key === 'ollama') // 本地模型只能用 ollama
+          .map(([key, p]) => ({
+            value: key,
+            label: p.name,
+            hint: p.hint,
+          })),
+        providerKey, // 默认选择相同的 provider
+      );
+      
+      if (!epProviderKey) break;
+      
+      const epProvider = LLM_PROVIDERS[epProviderKey];
+      let epBaseUrl = epProvider.baseUrl;
+      let epModel = epProvider.defaultModel;
+      
+      // 自定义 baseUrl
+      const customEpUrl = await text(`API Base URL (${epProvider.name})`, undefined, epProvider.baseUrl);
+      if (customEpUrl === null) break;
+      if (customEpUrl) epBaseUrl = customEpUrl.replace(/\/$/, '');
+      
+      // 选择模型
+      if (epProvider.models.length > 0 && epProviderKey !== 'custom') {
+        const selectedEpModel = await select(
+          '选择模型',
+          [
+            { value: epModel, label: `${epModel} (默认)` },
+            ...epProvider.models.filter(m => m !== epModel).map(m => ({ value: m, label: m })),
+            { value: '__custom__', label: '自定义...' },
+          ],
+          epModel,
+        );
+        
+        if (!selectedEpModel) break;
+        if (selectedEpModel === '__custom__') {
+          const customEpModel = await text('输入模型名称');
+          if (!customEpModel) break;
+          epModel = customEpModel;
+        } else {
+          epModel = selectedEpModel;
+        }
+      }
+      
+      // API Key
+      let epApiKey = '';
+      if (epProviderKey !== 'ollama') {
+        epApiKey = await password(`API Key (${epProvider.name})`);
+        if (epApiKey === null) break;
+      }
+      
+      // 权重
+      const epWeight = await num('权重（用于轮换概率）', 1, 1, 10);
+      if (epWeight === null) break;
+      
+      // 添加端点
+      endpoints.push({
+        name: `${epProvider.name} 端点 ${endpointIndex}`,
+        apiKey: epApiKey,
+        baseUrl: epBaseUrl,
+        model: epModel,
+        weight: epWeight || 1,
+      });
+      
+      endpointIndex++;
+      
+      // 询问是否继续添加
+      addMore = await confirm('继续添加更多端点？', false);
+      
+      // 最多支持 10 个端点
+      if (endpoints.length >= 10) {
+        console.log('已达到最大端点数量（10个）');
+        break;
+      }
+    }
+  }
+
+  const result: LLMSectionResult = {
     llm: {
       provider: providerKey,
       model,
@@ -175,4 +298,18 @@ export async function configureLLM(existing?: Partial<LLMConfig>): Promise<LLMSe
       },
     },
   };
+  
+  // 如果配置了多端点，添加到结果
+  if (endpoints.length > 1) {
+    result.llm.endpoints = endpoints.map(ep => ({
+      name: ep.name,
+      apiKey: ep.apiKey,
+      baseUrl: ep.baseUrl,
+      model: ep.model,
+      weight: ep.weight,
+      enabled: true,
+    }));
+  }
+  
+  return result;
 }
