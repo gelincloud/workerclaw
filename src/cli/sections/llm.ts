@@ -251,8 +251,9 @@ export async function configureLLM(existing?: Partial<LLMConfig>): Promise<LLMSe
       // API Key
       let epApiKey = '';
       if (epProviderKey !== 'ollama') {
-        epApiKey = await password(`API Key (${epProvider.name})`);
-        if (epApiKey === null) break;
+        const inputKey = await password(`API Key (${epProvider.name})`);
+        if (inputKey === null) break;
+        epApiKey = inputKey;
       }
       
       // 权重
