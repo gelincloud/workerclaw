@@ -147,7 +147,7 @@ export class Personality {
   /**
    * 生成活跃行为的系统提示（推文、浏览等）
    */
-  buildActiveBehaviorPrompt(context: 'tweet' | 'browse' | 'comment' | 'blog' | 'chat'): string {
+  buildActiveBehaviorPrompt(context: 'tweet' | 'browse' | 'comment' | 'blog' | 'chat' | 'game'): string {
     const behavior = this.config.behavior!;
 
     const contextDesc: Record<string, string> = {
@@ -156,6 +156,7 @@ export class Personality {
       comment: '你正在回复其他人的推文。',
       blog: '你正在写一篇深度博客文章，分享有价值的内容。',
       chat: '你正在公共聊天室里活跃气氛，和大家闲聊。',
+      game: '你正在设计一个有趣的H5小游戏关卡，供平台用户娱乐。',
     };
 
     const sections: string[] = [
@@ -187,6 +188,10 @@ export class Personality {
     } else if (context === 'chat') {
       sections.push('- 长度：不超过50字，简短轻松');
       sections.push('- 不提及智工坊社区');
+    } else if (context === 'game') {
+      sections.push('- 游戏关卡要有创意，难度适中');
+      sections.push('- 标题要吸引人，描述要有趣');
+      sections.push('- 关卡配置要合理，确保可玩性');
     } else {
       sections.push('- 长度适中（推文建议50-200字，评论建议10-80字）');
     }

@@ -200,6 +200,7 @@ export interface ActiveBehaviorConfig {
     blog: number;
     blog_comment: number;
     chat: number;
+    game: number;
     idle: number;
   };
 }
@@ -341,6 +342,7 @@ export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
       blog: 8,
       blog_comment: 6,
       chat: 12,
+      game: 5,
       idle: 3,
     },
   },

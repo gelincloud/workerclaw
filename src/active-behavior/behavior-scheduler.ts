@@ -32,6 +32,7 @@ export interface BehaviorSchedulerConfig {
     blog: number;
     blog_comment: number;
     chat: number;
+    game: number;
     idle: number;
   };
 }
@@ -49,6 +50,7 @@ export const DEFAULT_BEHAVIOR_CONFIG: BehaviorSchedulerConfig = {
     blog: 8,
     blog_comment: 6,
     chat: 12,
+    game: 5,
     idle: 3,
   },
 };
@@ -80,6 +82,8 @@ export interface BehaviorCallbacks {
   commentBlog?: (blogId: string, content: string, parentId?: string) => Promise<boolean>;
   /** 聊天室发言 */
   sendChatMessage?: (content: string) => Promise<boolean>;
+  /** 发布游戏 */
+  publishGame?: (gameType: string, title: string, levelData: string, description: string) => Promise<boolean>;
 }
 
 // ==================== BehaviorScheduler ====================
@@ -250,6 +254,9 @@ export class BehaviorScheduler {
           break;
         case 'chat':
           result = await this.executeChat();
+          break;
+        case 'game':
+          result = await this.executeGame();
           break;
         default:
           result = { type, success: false, error: '未知行为类型', durationMs: 0 };
@@ -523,6 +530,96 @@ export class BehaviorScheduler {
   }
 
   /**
+   * 发布H5小游戏
+   */
+  private async executeGame(): Promise<BehaviorResult> {
+    const startTime = Date.now();
+
+    const systemPrompt = this.personality.buildActiveBehaviorPrompt('game');
+
+    // 可用游戏类型：snake, 2048
+    const gameTypes = ['snake', '2048'];
+    const gameTypeInfo: Record<string, string> = {
+      snake: '贪吃蛇游戏：经典控制蛇吃食物变长，撞墙或撞自己游戏结束。可配置：初始蛇长度、食物位置、障碍物、速度等级。',
+      '2048': '2048数字游戏：滑动合并相同数字，达到2048获胜。可配置：初始布局、目标数字、格子大小(4x4/5x5)。',
+    };
+
+    const randomType = gameTypes[Math.floor(Math.random() * gameTypes.length)];
+
+    const content = await this.llm.simpleChat(
+      systemPrompt,
+      `请为「${randomType}」游戏生成关卡配置。
+游戏类型说明：${gameTypeInfo[randomType]}
+
+按JSON格式输出：
+{
+  "title": "游戏标题（吸引人的名字）",
+  "description": "游戏描述（30-100字，介绍玩法亮点）",
+  "levelData": "关卡配置（JSON字符串，根据游戏类型配置）"
+}
+
+${randomType === 'snake' ? `levelData 示例（贪吃蛇）:
+{"initialLength":3,"speed":150,"obstacles":[{"x":5,"y":5},{"x":6,"y":5}],"foodCount":3}` : ''}
+
+${randomType === '2048' ? `levelData 示例（2048）:
+{"gridSize":4,"targetTile":2048,"initialTiles":[{"x":0,"y":0,"value":2},{"x":1,"y":1,"value":4}]}` : ''}
+
+只输出JSON，不要其他内容。`,
+    );
+
+    if (!content || content.length < 10) {
+      return {
+        type: 'game',
+        success: false,
+        error: '生成游戏内容过短',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    // 尝试解析JSON
+    try {
+      // 提取 JSON 内容（支持 markdown 代码块格式）
+      let jsonStr = content;
+
+      // 尝试提取 markdown 代码块中的 JSON
+      const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1].trim();
+      } else {
+        // 没有代码块，尝试直接匹配 JSON 对象
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          jsonStr = jsonMatch[0];
+        }
+      }
+
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.title && parsed.description && parsed.levelData) {
+        this.logger.debug('游戏内容解析成功', { title: parsed.title, gameType: randomType });
+        const published = this.callbacks.publishGame
+          ? await this.callbacks.publishGame(randomType, parsed.title.trim(), JSON.stringify(parsed.levelData), parsed.description.trim())
+          : false;
+        return {
+          type: 'game',
+          success: published,
+          content: published ? `游戏「${parsed.title}」(${randomType})` : undefined,
+          error: published ? undefined : '游戏发布回调未配置',
+          durationMs: Date.now() - startTime,
+        };
+      }
+    } catch (parseErr) {
+      this.logger.warn('游戏 JSON 解析失败', { error: (parseErr as Error).message, content: content.substring(0, 200) });
+    }
+
+    return {
+      type: 'game',
+      success: false,
+      error: '游戏内容解析失败',
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  /**
    * 加权随机选择行为类型
    */
   private weightedRandomSelect(): BehaviorType {
@@ -535,6 +632,7 @@ export class BehaviorScheduler {
       ['blog', weights.blog],
       ['blog_comment', weights.blog_comment || 6],
       ['chat', weights.chat],
+      ['game', weights.game || 5],
       ['idle', weights.idle],
     ];
 

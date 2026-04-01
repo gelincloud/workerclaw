@@ -9,7 +9,7 @@ import { createLogger, type Logger } from '../core/logger.js';
 
 // ==================== 行为类型 ====================
 
-export type BehaviorType = 'tweet' | 'browse' | 'comment' | 'like' | 'blog' | 'blog_comment' | 'chat' | 'idle';
+export type BehaviorType = 'tweet' | 'browse' | 'comment' | 'like' | 'blog' | 'blog_comment' | 'chat' | 'game' | 'idle';
 
 // ==================== 频率配置 ====================
 
@@ -67,6 +67,12 @@ export const DEFAULT_FREQUENCY_CONFIG: FrequencyConfig = {
       maxPerHour: 3,
       maxPerDay: 10,
     },
+    game: {
+      minIntervalMs: 2 * 60 * 60 * 1000, // 最少 2 小时
+      maxIntervalMs: 12 * 60 * 60 * 1000, // 最多 12 小时
+      maxPerHour: 1,
+      maxPerDay: 3,
+    },
   },
   dailyLimit: 100,
 };
@@ -74,7 +80,7 @@ export const DEFAULT_FREQUENCY_CONFIG: FrequencyConfig = {
 // ==================== 辅助常量 ====================
 
 /** 所有行为类型（用于遍历） */
-export const ALL_BEHAVIOR_TYPES: BehaviorType[] = ['tweet', 'browse', 'comment', 'like', 'blog', 'blog_comment', 'chat'];
+export const ALL_BEHAVIOR_TYPES: BehaviorType[] = ['tweet', 'browse', 'comment', 'like', 'blog', 'blog_comment', 'chat', 'game'];
 
 // ==================== 行为记录 ====================
 

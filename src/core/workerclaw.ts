@@ -74,7 +74,7 @@ export class WorkerClaw {
         minIdleTimeMs: config.activeBehavior?.minIdleTimeMs ?? 10 * 60 * 1000,
         frequency: config.activeBehavior ? {} : {},
         weights: config.activeBehavior?.weights ?? {
-          tweet: 10, browse: 23, comment: 14, like: 15, blog: 8, blog_comment: 6, chat: 12, idle: 3,
+          tweet: 10, browse: 23, comment: 14, like: 15, blog: 8, blog_comment: 6, chat: 12, game: 5, idle: 3,
         },
       },
       this.taskManager.getAgentEngine().getPersonality(),
@@ -286,6 +286,15 @@ export class WorkerClaw {
             this.logger.info(`[智能活跃] 💬 聊天消息已发送: "${content.substring(0, 40)}..."`);
           } else {
             this.logger.warn(`[智能活跃] 聊天消息发送失败`);
+          }
+          return result.success;
+        },
+        publishGame: async (gameType: string, title: string, levelData: string, description: string) => {
+          const result = await platformApi.postGame(gameType, title, levelData, description);
+          if (result.success) {
+            this.logger.info(`[智能活跃] 🎮 游戏已发布: "${title}" (${gameType})`);
+          } else {
+            this.logger.warn(`[智能活跃] 游戏发布失败: ${result.error}`);
           }
           return result.success;
         },

@@ -652,6 +652,72 @@ export class PlatformApiClient {
   }
 
   /**
+   * 发布H5小游戏
+   * POST /api/games
+   */
+  async postGame(
+    gameType: string,
+    title: string,
+    levelData: string,
+    description: string,
+  ): Promise<{ success: boolean; error?: string; gameId?: string }> {
+    const endpoint = `${this.config.apiUrl}/api/games`;
+
+    // 参数验证
+    if (!gameType || !title || !levelData) {
+      this.logger.warn('游戏发布参数缺失', { hasType: !!gameType, hasTitle: !!title, hasLevelData: !!levelData });
+      return { success: false, error: '缺少游戏类型、标题或关卡数据' };
+    }
+
+    try {
+      const body: Record<string, any> = {
+        botId: this.config.botId,
+        gameType,
+        title,
+        levelData,
+        description: description || '',
+      };
+
+      this.logger.debug('游戏发布请求', { gameType, title, levelDataLength: levelData.length });
+
+      const response = await this.request(endpoint, 'POST', body);
+
+      const data = await response.json() as any;
+      if (response.ok && (data.success || data.id || data.gameId)) {
+        this.logger.info(`🎮 游戏已发布: "${title}" (${gameType})`);
+        return { success: true, gameId: data.id || data.gameId };
+      } else {
+        this.logger.warn(`游戏发布失败`, { error: data.error || data.message, status: response.status });
+        return { success: false, error: data.error || data.message };
+      }
+    } catch (err) {
+      this.logger.error('游戏发布异常', { error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /**
+   * 获取游戏列表
+   * GET /api/games
+   */
+  async getGames(limit = 10, offset = 0, gameType?: string): Promise<any[]> {
+    let endpoint = `${this.config.apiUrl}/api/games?limit=${limit}&offset=${offset}`;
+    if (gameType) {
+      endpoint += `&gameType=${encodeURIComponent(gameType)}`;
+    }
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return [];
+      const data = await response.json() as any;
+      return data.games || [];
+    } catch (err) {
+      this.logger.error('获取游戏列表异常', { error: (err as Error).message });
+      return [];
+    }
+  }
+
+  /**
    * 获取博客详情
    * GET /api/blog/:id
    */
