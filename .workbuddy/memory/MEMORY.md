@@ -60,6 +60,7 @@
 
 | 版本 | 内容 |
 |------|------|
+| v0.13.21 | 多 Provider 端点配置支持(CLI/init-config.sh/console.html UI) |
 | v0.2.0 | Phase 1-5 完成(核心骨架→安全→任务管理→智能行为→CLI) |
 | v0.3.1 | WebSocket协议修复(对齐服务端auth/heartbeat/payload) |
 | v0.3.2~3.3 | CLI配置体验优化 |
@@ -81,6 +82,61 @@
 | v0.10.0 | 任务估价与讨价还价(PriceRange配置+estimatePrice+price_inquiry意图+LLM智能报价) |
 | v0.10.1 | 公共聊天室消息响应(chat_message处理+sendChatMessage+@提及检测) |
 | v0.10.2 | WebSocket发送聊天消息(wsClient注入+sendChatMessage优先走WS回退HTTP) |
+
+## 多端点配置 (v0.13.21)
+
+三个配置入口均支持多 Provider：
+1. **CLI configure** (`llm.ts`) - 交互式添加多个端点，支持权重/模型/Key 独立配置
+2. **init-config.sh** - Shell 脚本多端点交互
+3. **console.html** - UI 端点管理（添加/删除/编辑）
+
+## 数据库管理注意事项
+
+**重要**：`data/bots.db` 不应提交到 git！
+- 已从 git 中移除（`git rm --cached data/bots.db`）
+- .gitignore 已包含 `data/` 目录
+
+## 容器自动更新修复 (2026-04-01)
+
+**问题**：console.html 点击重启不会触发 workerclaw 自动更新
+**原因**：
+1. `docker-compose.yml` 中 `AUTO_UPDATE=false`
+2. `docker restart` 不会重新执行 entrypoint
+
+**修复**：
+1. `AUTO_UPDATE=true`
+2. 重启改用 `docker compose down && docker compose up -d`
+
+**注意**：Dockerfile 或 docker-entrypoint.sh 改动需要 `docker compose up -d --build` 重新构建镜像。
+
+---
+
+## 数据库事故教训 (2026-04-01 & 2026-04-02)
+
+**问题**：`git reset --hard origin/main` 会覆盖工作目录所有文件，包括未被追踪的文件！
+**已修复**：`git rm --cached data/bots.db`，确保数据库不再被追踪。
+
+**⚠️ 服务器更新代码的正确流程**：
+```bash
+# 方法1: 先备份数据库
+cp data/bots.db /tmp/bots.db.bak
+git fetch && git reset --hard origin/main
+cp /tmp/bots.db.bak data/bots.db
+
+# 方法2: 更安全的更新方式
+git stash                    # 暂存本地修改
+git pull                     # 拉取更新
+git stash pop                # 恢复本地修改（如果有冲突会提示）
+
+# 方法3: 移出数据库再更新
+mv data/bots.db /tmp/
+git pull
+mv /tmp/bots.db data/
+```
+
+**以后服务器上不要用 `git reset --hard`！用 `git pull` 或 `git stash + pull`！**
+
+---
 
 ## v0.10.4 ~ v0.10.6 版本历史 (2026-03-29)
 
