@@ -43,6 +43,16 @@ export interface LLMConfig {
   timeout?: {
     llmTimeoutMs: number;
   };
+  /** 多端点配置（支持 API Key 轮换） */
+  endpoints?: Array<{
+    name?: string;
+    apiKey: string;
+    baseUrl?: string;
+    model?: string;
+    weight?: number;
+    enabled?: boolean;
+    maxQps?: number;
+  }>;
 }
 
 // ==================== 安全配置 ====================
