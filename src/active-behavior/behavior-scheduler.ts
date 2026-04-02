@@ -799,14 +799,35 @@ export class BehaviorScheduler {
 
     const systemPrompt = this.personality.buildActiveBehaviorPrompt('game');
 
-    // 可用游戏类型：snake, 2048
-    const gameTypes = ['snake', '2048'];
+    // 可用游戏类型（与服务端 /api/game-types 对齐）
+    // 注：前端已实现 snake, 2048；breakout/tetris/memory/maze 前端尚未渲染但服务端已支持
+    const gameTypes = ['snake', '2048', 'breakout', 'tetris', 'memory', 'maze'];
     const gameTypeInfo: Record<string, string> = {
       snake: '贪吃蛇游戏：经典控制蛇吃食物变长，撞墙或撞自己游戏结束。可配置：初始蛇长度、食物位置、障碍物、速度等级。',
       '2048': '2048数字游戏：滑动合并相同数字，达到2048获胜。可配置：初始布局、目标数字、格子大小(4x4/5x5)。',
+      breakout: '打砖块游戏：控制挡板反弹小球击碎上方砖块。可配置：挡板宽度、球速、砖块布局、砖块耐久度。',
+      tetris: '俄罗斯方块：经典下落方块消除游戏。可配置：初始高度、下落速度、方块类型权重、行消除目标。',
+      memory: '记忆翻牌游戏：翻两张牌配对，全部配对成功获胜。可配置：网格大小(4x4/6x6)、牌面图案、最大翻牌次数。',
+      maze: '迷宫游戏：从起点走到终点的迷宫探索。可配置：迷宫大小、难度等级、时间限制、是否允许回退。',
     };
 
     const randomType = gameTypes[Math.floor(Math.random() * gameTypes.length)];
+
+    // 为每种游戏类型生成对应的 levelData 示例
+    const levelDataHints: Record<string, string> = {
+      snake: `levelData 示例（贪吃蛇）:
+{"initialLength":3,"speed":150,"obstacles":[{"x":5,"y":5},{"x":6,"y":5}],"foodCount":3}`,
+      '2048': `levelData 示例（2048）:
+{"gridSize":4,"targetTile":2048,"initialTiles":[{"x":0,"y":0,"value":2},{"x":1,"y":1,"value":4}]}`,
+      breakout: `levelData 示例（打砖块）:
+{"paddleWidth":80,"ballSpeed":5,"rows":5,"cols":8,"brickDurability":[1,1,2,2,3]}`,
+      tetris: `levelData 示例（俄罗斯方块）:
+{"startSpeed":1000,"speedIncrease":50,"height":20,"width":10,"targetLines":20}`,
+      memory: `levelData 示例（记忆翻牌）:
+{"gridSize":4,"maxFlips":30,"symbols":["★","♦","♣","♥","♠","●","▲","■"]}`,
+      maze: `levelData 示例（迷宫）:
+{"size":15,"difficulty":3,"timeLimit":120,"allowBacktrack":true,"wallDensity":0.3}`,
+    };
 
     const content = await this.llm.simpleChat(
       systemPrompt,
@@ -820,11 +841,7 @@ export class BehaviorScheduler {
   "levelData": "关卡配置（JSON字符串，根据游戏类型配置）"
 }
 
-${randomType === 'snake' ? `levelData 示例（贪吃蛇）:
-{"initialLength":3,"speed":150,"obstacles":[{"x":5,"y":5},{"x":6,"y":5}],"foodCount":3}` : ''}
-
-${randomType === '2048' ? `levelData 示例（2048）:
-{"gridSize":4,"targetTile":2048,"initialTiles":[{"x":0,"y":0,"value":2},{"x":1,"y":1,"value":4}]}` : ''}
+${levelDataHints[randomType]}
 
 只输出JSON，不要其他内容。`,
     );
