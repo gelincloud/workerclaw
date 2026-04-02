@@ -1,0 +1,911 @@
+/**
+ * OpenCLI 公共 API 工具集
+ *
+ * 将 OpenCLI 项目中 strategy=public 且 browser=false 的命令，
+ * 封装为 WorkerClaw 内置工具，让 Agent 可以直接调用公开 API 获取数据。
+ *
+ * 所有工具权限级别为 limited（只读网络请求，不修改数据）。
+ *
+ * 支持的 site 命令：
+ *   - hackernews: top, new, best, ask, show, jobs, search
+ *   - stackoverflow: hot, search
+ *   - devto: top, tag
+ *   - lobsters: hot, newest, active
+ *   - v2ex: hot, latest
+ *   - reddit: hot, popular, frontpage, search
+ *   - producthunt: today, hot
+ *   - steam: top-sellers
+ *   - reuters: search
+ *   - bbc: news
+ *   - arxiv: search, paper
+ *   - hf (HuggingFace): top
+ *   - dictionary: search, synonyms, examples
+ *   - wikipedia: search, summary, trending, random
+ *   - google: search, news, trends, suggest
+ *   - bloomberg: news, markets, tech, politics, economics
+ *   - imdb: search, trending, top
+ *   - 36kr: hot, news, article, search
+ *   - smzdm: search
+ *   - sinafinance: news, stock, rolling-news
+ *   - xueqiu: hot, hot-stock, search, stock, feed
+ */
+
+import { createLogger } from '../core/logger.js';
+import type { ToolDefinition, ToolExecutorFn, ToolResult, PermissionLevel } from '../types/agent.js';
+
+const logger = createLogger('OpenCliTools');
+
+// ==================== 工具定义注册表 ====================
+
+interface OpenCliToolDef {
+  name: string;
+  description: string;
+  site: string;
+  command: string;
+  args: Record<string, { type: 'string' | 'number'; required?: boolean; default?: any; description: string }>;
+  execute: (args: Record<string, any>) => Promise<string>;
+}
+
+// 所有 PUBLIC API 工具定义
+const OPENCLI_TOOLS: OpenCliToolDef[] = [
+  // === Hacker News ===
+  {
+    name: 'hackernews_top',
+    description: '获取 Hacker News 首页热门帖子（Top Stories）',
+    site: 'hackernews', command: 'top',
+    args: { limit: { type: 'number', default: 20, description: '返回条数（默认20）' } },
+    execute: async (args) => fetchHackerNews('top', args),
+  },
+  {
+    name: 'hackernews_new',
+    description: '获取 Hacker News 最新帖子',
+    site: 'hackernews', command: 'new',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchHackerNews('new', args),
+  },
+  {
+    name: 'hackernews_best',
+    description: '获取 Hacker News 最佳帖子',
+    site: 'hackernews', command: 'best',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchHackerNews('best', args),
+  },
+  {
+    name: 'hackernews_ask',
+    description: '获取 Hacker News Ask HN 帖子',
+    site: 'hackernews', command: 'ask',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchHackerNews('ask', args),
+  },
+  {
+    name: 'hackernews_show',
+    description: '获取 Hacker News Show HN 帖子',
+    site: 'hackernews', command: 'show',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchHackerNews('show', args),
+  },
+  {
+    name: 'hackernews_jobs',
+    description: '获取 Hacker News 招聘帖子',
+    site: 'hackernews', command: 'jobs',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchHackerNews('jobs', args),
+  },
+  {
+    name: 'hackernews_search',
+    description: '搜索 Hacker News 帖子',
+    site: 'hackernews', command: 'search',
+    args: {
+      query: { type: 'string', required: true, description: '搜索关键词' },
+      limit: { type: 'number', default: 20, description: '返回条数' },
+      sort: { type: 'string', default: 'relevance', description: '排序方式: relevance 或 date' },
+    },
+    execute: async (args) => searchHackerNews(args),
+  },
+
+  // === Stack Overflow ===
+  {
+    name: 'stackoverflow_hot',
+    description: '获取 Stack Overflow 热门问题',
+    site: 'stackoverflow', command: 'hot',
+    args: { limit: { type: 'number', default: 10, description: '返回条数' } },
+    execute: async (args) => fetchStackOverflowHot(args),
+  },
+  {
+    name: 'stackoverflow_search',
+    description: '搜索 Stack Overflow 问答',
+    site: 'stackoverflow', command: 'search',
+    args: {
+      query: { type: 'string', required: true, description: '搜索关键词' },
+      limit: { type: 'number', default: 10, description: '返回条数' },
+    },
+    execute: async (args) => searchStackOverflow(args),
+  },
+
+  // === DEV.to ===
+  {
+    name: 'devto_top',
+    description: '获取 DEV.to 热门文章',
+    site: 'devto', command: 'top',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchDevToTop(args),
+  },
+  {
+    name: 'devto_tag',
+    description: '获取 DEV.to 指定标签的文章',
+    site: 'devto', command: 'tag',
+    args: {
+      tag: { type: 'string', required: true, description: '标签名（如 javascript, rust）' },
+      limit: { type: 'number', default: 20, description: '返回条数' },
+    },
+    execute: async (args) => fetchDevToTag(args),
+  },
+
+  // === Lobsters ===
+  {
+    name: 'lobsters_hot',
+    description: '获取 Lobste.rs 热门技术文章',
+    site: 'lobsters', command: 'hot',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchLobsters('hottest.json', args),
+  },
+  {
+    name: 'lobsters_newest',
+    description: '获取 Lobste.rs 最新技术文章',
+    site: 'lobsters', command: 'newest',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchLobsters('newest.json', args),
+  },
+  {
+    name: 'lobsters_active',
+    description: '获取 Lobste.rs 活跃讨论',
+    site: 'lobsters', command: 'active',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchLobsters('active.json', args),
+  },
+
+  // === V2EX ===
+  {
+    name: 'v2ex_hot',
+    description: '获取 V2EX 热门话题',
+    site: 'v2ex', command: 'hot',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchV2EX('hot.json', args),
+  },
+  {
+    name: 'v2ex_latest',
+    description: '获取 V2EX 最新话题',
+    site: 'v2ex', command: 'latest',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchV2EX('latest.json', args),
+  },
+
+  // === Reddit ===
+  {
+    name: 'reddit_hot',
+    description: '获取 Reddit 热门帖子（指定 subreddit）',
+    site: 'reddit', command: 'hot',
+    args: {
+      subreddit: { type: 'string', default: 'all', description: 'Subreddit 名称（如 programming, all）' },
+      limit: { type: 'number', default: 20, description: '返回条数' },
+    },
+    execute: async (args) => fetchReddit('hot', args),
+  },
+  {
+    name: 'reddit_search',
+    description: '搜索 Reddit 帖子',
+    site: 'reddit', command: 'search',
+    args: {
+      query: { type: 'string', required: true, description: '搜索关键词' },
+      subreddit: { type: 'string', default: 'all', description: '在哪个 subreddit 搜索' },
+      limit: { type: 'number', default: 20, description: '返回条数' },
+    },
+    execute: async (args) => searchReddit(args),
+  },
+
+  // === Product Hunt ===
+  {
+    name: 'producthunt_today',
+    description: '获取 Product Hunt 今日热门产品',
+    site: 'producthunt', command: 'today',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchProductHuntToday(args),
+  },
+
+  // === Steam ===
+  {
+    name: 'steam_top_sellers',
+    description: '获取 Steam 畅销游戏榜',
+    site: 'steam', command: 'top-sellers',
+    args: { limit: { type: 'number', default: 10, description: '返回条数' } },
+    execute: async (args) => fetchSteamTopSellers(args),
+  },
+
+  // === ArXiv ===
+  {
+    name: 'arxiv_search',
+    description: '搜索 ArXiv 学术论文',
+    site: 'arxiv', command: 'search',
+    args: {
+      query: { type: 'string', required: true, description: '搜索关键词' },
+      limit: { type: 'number', default: 10, description: '返回条数' },
+    },
+    execute: async (args) => searchArxiv(args),
+  },
+
+  // === HuggingFace ===
+  {
+    name: 'hf_trending',
+    description: '获取 HuggingFace 热门模型',
+    site: 'hf', command: 'top',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchHFTrending(args),
+  },
+
+  // === Wikipedia ===
+  {
+    name: 'wikipedia_search',
+    description: '搜索 Wikipedia 条目',
+    site: 'wikipedia', command: 'search',
+    args: {
+      query: { type: 'string', required: true, description: '搜索关键词' },
+      limit: { type: 'number', default: 10, description: '返回条数' },
+    },
+    execute: async (args) => searchWikipedia(args),
+  },
+  {
+    name: 'wikipedia_summary',
+    description: '获取 Wikipedia 条目摘要',
+    site: 'wikipedia', command: 'summary',
+    args: {
+      title: { type: 'string', required: true, description: '条目标题' },
+    },
+    execute: async (args) => fetchWikipediaSummary(args),
+  },
+  {
+    name: 'wikipedia_trending',
+    description: '获取 Wikipedia 当前热门条目',
+    site: 'wikipedia', command: 'trending',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetchWikipediaTrending(args),
+  },
+
+  // === 36kr ===
+  {
+    name: 'kr36_hot',
+    description: '获取 36氪热门资讯',
+    site: '36kr', command: 'hot',
+    args: { limit: { type: 'number', default: 20, description: '返回条数' } },
+    execute: async (args) => fetch36KrHot(args),
+  },
+];
+
+// ==================== 通用 HTTP fetch ====================
+
+const USER_AGENT = 'Mozilla/5.0 (compatible; WorkerClaw/1.0; +https://www.miniabc.top)';
+const DEFAULT_TIMEOUT = 15000;
+
+async function httpGet(url: string, timeoutMs = DEFAULT_TIMEOUT): Promise<any> {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': USER_AGENT,
+      'Accept': 'application/json',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${url}`);
+  }
+  return response.json();
+}
+
+// ==================== 格式化输出 ====================
+
+function formatResults(items: Record<string, any>[], columns: string[]): string {
+  if (!items || items.length === 0) return '暂无数据';
+  return items.map((item, i) => {
+    const parts = columns.map(col => {
+      const val = item[col];
+      if (val === undefined || val === null) return '';
+      const str = String(val);
+      // URL 类型单独标记
+      if (col === 'url' && str.startsWith('http')) return '';
+      return `${col}: ${str}`;
+    }).filter(Boolean);
+
+    const rank = `[${i + 1}]`;
+    const url = item.url ? `\n   链接: ${item.url}` : '';
+    return `${rank} ${parts.join(' | ')}${url}`;
+  }).join('\n');
+}
+
+// ==================== Hacker News ====================
+
+const HN_API = 'https://hacker-news.firebaseio.com/v0';
+
+async function fetchHackerNews(type: string, args: Record<string, any>): Promise<string> {
+  const limit = Math.min(args.limit || 20, 50);
+  const ids = await httpGet(`${HN_API}/${type}stories.json`) as number[];
+
+  const items = [];
+  const fetchLimit = Math.min(limit + 5, ids.length);
+  for (let i = 0; i < fetchLimit; i++) {
+    try {
+      const item = await httpGet(`${HN_API}/item/${ids[i]}.json`);
+      if (item && item.title && !item.deleted && !item.dead) {
+        items.push({
+          title: item.title,
+          score: item.score || 0,
+          author: item.by || '',
+          comments: item.descendants || 0,
+          url: item.url || `https://news.ycombinator.com/item?id=${ids[i]}`,
+        });
+      }
+    } catch { /* skip failed items */ }
+    if (items.length >= limit) break;
+  }
+
+  return `Hacker News ${type} stories (${items.length}条):\n\n${formatResults(items, ['title', 'score', 'author', 'comments'])}`;
+}
+
+async function searchHackerNews(args: Record<string, any>): Promise<string> {
+  const sort = args.sort === 'date' ? 'search_by_date' : 'search';
+  const url = `https://hn.algolia.com/api/v1/${sort}?query=${encodeURIComponent(args.query)}&tags=story&hitsPerPage=${Math.min(args.limit || 20, 50)}`;
+  const data = await httpGet(url);
+  const hits = (data.hits || []).map((h: any) => ({
+    title: h.title,
+    score: h.points || 0,
+    author: h.author || '',
+    comments: h.num_comments || 0,
+    url: h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
+  }));
+
+  return `Hacker News 搜索 "${args.query}" (${hits.length}条):\n\n${formatResults(hits, ['title', 'score', 'author', 'comments', 'url'])}`;
+}
+
+// ==================== Stack Overflow ====================
+
+async function fetchStackOverflowHot(args: Record<string, any>): Promise<string> {
+  const url = `https://api.stackexchange.com/2.3/questions?order=desc&sort=hot&site=stackoverflow&pagesize=${Math.min(args.limit || 10, 50)}`;
+  const data = await httpGet(url);
+  const items = (data.items || []).map((q: any) => ({
+    title: q.title,
+    score: q.score,
+    answers: q.answer_count,
+    tags: (q.tags || []).join(', '),
+    url: q.link,
+  }));
+
+  return `Stack Overflow 热门问题 (${items.length}条):\n\n${formatResults(items, ['title', 'score', 'answers', 'tags', 'url'])}`;
+}
+
+async function searchStackOverflow(args: Record<string, any>): Promise<string> {
+  const url = `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(args.query)}&site=stackoverflow&pagesize=${Math.min(args.limit || 10, 50)}`;
+  const data = await httpGet(url);
+  const items = (data.items || []).map((q: any) => ({
+    title: q.title,
+    score: q.score,
+    answers: q.answer_count,
+    tags: (q.tags || []).slice(0, 5).join(', '),
+    url: q.link,
+  }));
+
+  return `Stack Overflow 搜索 "${args.query}" (${items.length}条):\n\n${formatResults(items, ['title', 'score', 'answers', 'tags', 'url'])}`;
+}
+
+// ==================== DEV.to =================
+
+async function fetchDevToTop(args: Record<string, any>): Promise<string> {
+  const url = `https://dev.to/api/articles?top=1&per_page=${Math.min(args.limit || 20, 50)}`;
+  const articles = await httpGet(url);
+  const items = (articles || []).map((a: any) => ({
+    title: a.title,
+    author: a.user?.username || '',
+    reactions: a.public_reactions_count || 0,
+    comments: a.comments_count || 0,
+    tags: (a.tag_list || []).join(', '),
+    url: a.url,
+  }));
+
+  return `DEV.to 热门文章 (${items.length}条):\n\n${formatResults(items, ['title', 'author', 'reactions', 'comments', 'tags', 'url'])}`;
+}
+
+async function fetchDevToTag(args: Record<string, any>): Promise<string> {
+  const url = `https://dev.to/api/articles?tag=${encodeURIComponent(args.tag)}&per_page=${Math.min(args.limit || 20, 50)}`;
+  const articles = await httpGet(url);
+  const items = (articles || []).map((a: any) => ({
+    title: a.title,
+    author: a.user?.username || '',
+    reactions: a.public_reactions_count || 0,
+    comments: a.comments_count || 0,
+    url: a.url,
+  }));
+
+  return `DEV.to #${args.tag} 文章 (${items.length}条):\n\n${formatResults(items, ['title', 'author', 'reactions', 'comments', 'url'])}`;
+}
+
+// ==================== Lobsters ===
+
+async function fetchLobsters(endpoint: string, args: Record<string, any>): Promise<string> {
+  const url = `https://lobste.rs/${endpoint}`;
+  const stories = await httpGet(url);
+  const items = (stories || []).slice(0, args.limit || 20).map((s: any, i: number) => ({
+    title: s.title,
+    score: s.score,
+    author: s.submitter_user,
+    comments: s.comment_count,
+    tags: (s.tags || []).join(', '),
+    url: s.comments_url || s.url,
+  }));
+
+  return `Lobste.rs 热门文章 (${items.length}条):\n\n${formatResults(items, ['title', 'score', 'author', 'comments', 'tags', 'url'])}`;
+}
+
+// ==================== V2EX ===
+
+async function fetchV2EX(endpoint: string, args: Record<string, any>): Promise<string> {
+  const url = `https://www.v2ex.com/api/topics/${endpoint}`;
+  const topics = await httpGet(url);
+  const items = (topics || []).slice(0, args.limit || 20).map((t: any, i: number) => ({
+    title: t.title,
+    node: t.node?.title || t.node?.name || '',
+    replies: t.replies,
+    url: t.url,
+  }));
+
+  return `V2EX 话题 (${items.length}条):\n\n${formatResults(items, ['title', 'node', 'replies', 'url'])}`;
+}
+
+// ==================== Reddit ===
+
+async function fetchReddit(sort: string, args: Record<string, any>): Promise<string> {
+  const sub = args.subreddit || 'all';
+  const limit = Math.min(args.limit || 20, 50);
+  const url = `https://www.reddit.com/r/${sub}/${sort}.json?limit=${limit}`;
+  const data = await httpGet(url);
+  const children = data?.data?.children || [];
+  const items = children.map((c: any) => ({
+    title: c.data?.title || '',
+    score: c.data?.score || 0,
+    author: c.data?.author || '',
+    comments: c.data?.num_comments || 0,
+    subreddit: c.data?.subreddit || sub,
+    url: `https://www.reddit.com${c.data?.permalink || ''}`,
+  }));
+
+  return `Reddit r/${sub} ${sort} (${items.length}条):\n\n${formatResults(items, ['title', 'score', 'author', 'comments', 'subreddit', 'url'])}`;
+}
+
+async function searchReddit(args: Record<string, any>): Promise<string> {
+  const sub = args.subreddit || 'all';
+  const limit = Math.min(args.limit || 20, 50);
+  const url = `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(args.query)}&limit=${limit}&sort=relevance`;
+  const data = await httpGet(url);
+  const children = data?.data?.children || [];
+  const items = children.map((c: any) => ({
+    title: c.data?.title || '',
+    score: c.data?.score || 0,
+    author: c.data?.author || '',
+    comments: c.data?.num_comments || 0,
+    url: `https://www.reddit.com${c.data?.permalink || ''}`,
+  }));
+
+  return `Reddit 搜索 "${args.query}" r/${sub} (${items.length}条):\n\n${formatResults(items, ['title', 'score', 'author', 'comments', 'url'])}`;
+}
+
+// ==================== Product Hunt ===
+
+async function fetchProductHuntToday(args: Record<string, any>): Promise<string> {
+  const limit = Math.min(args.limit || 20, 50);
+  const url = 'https://www.producthunt.com/feed';
+  const response = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT },
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+  });
+  const text = await response.text();
+
+  // 解析 Atom feed
+  const items: { name: string; tagline: string; url: string }[] = [];
+  const entryRegex = /<entry>([\s\S]*?)<\/entry>/gi;
+  let match;
+  while ((match = entryRegex.exec(text)) !== null && items.length < limit) {
+    const entry = match[1];
+    const titleMatch = entry.match(/<title[^>]*><!\[CDATA\[(.+?)\]\]><\/title>/);
+    const linkMatch = entry.match(/<link[^>]*href="([^"]+)"/);
+    const contentMatch = entry.match(/<content[^>]*><!\[CDATA\[(.+?)\]\]><\/content>/);
+    if (titleMatch && linkMatch) {
+      items.push({
+        name: titleMatch[1],
+        tagline: contentMatch ? contentMatch[1].slice(0, 100) : '',
+        url: linkMatch[1],
+      });
+    }
+  }
+
+  const formatted = items.slice(0, limit).map((item, i) =>
+    `[${i + 1}] ${item.name}${item.tagline ? ' — ' + item.tagline : ''}\n   链接: ${item.url}`
+  ).join('\n');
+
+  return `Product Hunt 今日热门 (${items.length}条):\n\n${formatted}`;
+}
+
+// ==================== Steam =================
+
+async function fetchSteamTopSellers(args: Record<string, any>): Promise<string> {
+  const url = 'https://store.steampowered.com/api/featuredcategories/';
+  const data = await httpGet(url);
+  const games = data?.top_sellers?.items || [];
+  const items = games.slice(0, args.limit || 10).map((g: any, i: number) => {
+    const price = g.final_price ? (g.final_price / 100).toFixed(2) : '免费';
+    return {
+      name: g.name,
+      price: `¥${price}`,
+      discount: g.discount_percent ? `-${g.discount_percent}%` : '',
+      url: `https://store.steampowered.com/app/${g.id}`,
+    };
+  });
+
+  return `Steam 畅销榜 (${items.length}条):\n\n${formatResults(items, ['name', 'price', 'discount', 'url'])}`;
+}
+
+// ==================== ArXiv =================
+
+async function searchArxiv(args: Record<string, any>): Promise<string> {
+  const limit = Math.min(args.limit || 10, 30);
+  const url = `http://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(args.query)}&start=0&max_results=${limit}`;
+  const response = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT },
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+  });
+  const text = await response.text();
+
+  const items: { title: string; authors: string; summary: string; url: string }[] = [];
+  const entryRegex = /<entry>([\s\S]*?)<\/entry>/gi;
+  let match;
+  while ((match = entryRegex.exec(text)) !== null && items.length < limit) {
+    const entry = match[1];
+    const titleMatch = entry.match(/<title>([\s\S]*?)<\/title>/);
+    const idMatch = entry.match(/<id>(.*?)<\/id>/);
+    const summaryMatch = entry.match(/<summary>([\s\S]*?)<\/summary>/);
+    const authorMatches = entry.matchAll(/<name>(.*?)<\/name>/g);
+    const authors: string[] = [];
+    for (const am of authorMatches) {
+      authors.push(am[1]);
+      if (authors.length >= 3) break;
+    }
+    const authorStr = authors.join(', ') + (authors.length >= 3 ? ' 等' : '');
+    if (titleMatch && idMatch) {
+      items.push({
+        title: titleMatch[1].replace(/\s+/g, ' ').trim(),
+        authors: authorStr,
+        summary: summaryMatch ? summaryMatch[1].replace(/\s+/g, ' ').trim().slice(0, 200) : '',
+        url: idMatch[1],
+      });
+    }
+  }
+
+  const formatted = items.map((item, i) =>
+    `[${i + 1}] ${item.title}\n   作者: ${item.authors}\n   摘要: ${item.summary}...\n   链接: ${item.url}`
+  ).join('\n\n');
+
+  return `ArXiv 搜索 "${args.query}" (${items.length}条):\n\n${formatted}`;
+}
+
+// ==================== HuggingFace =================
+
+async function fetchHFTrending(args: Record<string, any>): Promise<string> {
+  const limit = Math.min(args.limit || 20, 50);
+  const url = `https://huggingface.co/api/models?sort=trending&limit=${limit}`;
+  const models = await httpGet(url);
+  const items = (models || []).map((m: any, i: number) => ({
+    name: m.id || m.modelId,
+    likes: m.likes || 0,
+    downloads: m.downloads || 0,
+    tags: (m.tags || []).slice(0, 3).join(', '),
+    url: `https://huggingface.co/${m.id || m.modelId}`,
+  }));
+
+  return `HuggingFace 热门模型 (${items.length}条):\n\n${formatResults(items, ['name', 'likes', 'downloads', 'tags', 'url'])}`;
+}
+
+// ==================== Wikipedia =================
+
+async function searchWikipedia(args: Record<string, any>): Promise<string> {
+  const limit = Math.min(args.limit || 10, 50);
+  const url = `https://zh.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(args.query)}&limit=${limit}&format=json&origin=*`;
+  const data = await httpGet(url);
+  const titles: string[] = data[1] || [];
+  const descriptions: string[] = data[2] || [];
+  const urls: string[] = data[3] || [];
+
+  const items = titles.map((t, i) => ({
+    title: t,
+    desc: descriptions[i] || '',
+    url: urls[i] || `https://zh.wikipedia.org/wiki/${encodeURIComponent(t)}`,
+  }));
+
+  return `Wikipedia 搜索 "${args.query}" (${items.length}条):\n\n${items.map((item, i) =>
+    `[${i + 1}] ${item.title}${item.desc ? ' — ' + item.desc : ''}\n   链接: ${item.url}`
+  ).join('\n')}`;
+}
+
+async function fetchWikipediaSummary(args: Record<string, any>): Promise<string> {
+  const url = `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(args.title)}`;
+  try {
+    const data = await httpGet(url);
+    return `Wikipedia: ${data.title || args.title}\n\n${data.extract || '暂无摘要'}\n\n链接: ${data.content_urls?.desktop?.page || ''}`;
+  } catch {
+    // 尝试英文
+    const urlEn = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(args.title)}`;
+    const data = await httpGet(urlEn);
+    return `Wikipedia (EN): ${data.title || args.title}\n\n${data.extract || '暂无摘要'}\n\n链接: ${data.content_urls?.desktop?.page || ''}`;
+  }
+}
+
+async function fetchWikipediaTrending(args: Record<string, any>): Promise<string> {
+  const limit = Math.min(args.limit || 20, 50);
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
+  const url = `https://wikistats.wmflabs.org/api.php?action=getTopPages&date=${dateStr}&project=zh.wikipedia.org&limit=${limit}&format=json`;
+  try {
+    const data = await httpGet(url);
+    const pages = data?.pages || data || [];
+    const items = Array.isArray(pages) ? pages.slice(0, limit).map((p: any, _i: number) => ({
+      title: p.title || p.page_title || p.article,
+      views: p.views || p.pageviews || 0,
+      url: `https://zh.wikipedia.org/wiki/${encodeURIComponent(p.title || p.page_title || p.article)}`,
+    })) : [];
+
+    if (items.length > 0) {
+      return `Wikipedia 热门条目 (${items.length}条):\n\n${formatResults(items, ['title', 'views', 'url'])}`;
+    }
+  } catch {
+    // fallback: Wikipedia API most-read
+  }
+
+  // Fallback: 通过 MediaWiki API 获取
+  try {
+    const url2 = `https://zh.wikipedia.org/w/api.php?action=query&list=random&rnlimit=${limit}&rnnamespace=0&format=json&origin=*`;
+    const data2 = await httpGet(url2);
+    const pages2 = data2?.query?.random || [];
+    const items2 = pages2.map((p: any) => ({
+      title: p.title,
+      url: `https://zh.wikipedia.org/wiki/${encodeURIComponent(p.title)}`,
+    }));
+    return `Wikipedia 随机条目 (${items2.length}条):\n\n${formatResults(items2, ['title', 'url'])}`;
+  } catch (err) {
+    return `获取 Wikipedia 热门条目失败: ${(err as Error).message}`;
+  }
+}
+
+// ==================== 36kr =================
+
+async function fetch36KrHot(args: Record<string, any>): Promise<string> {
+  const limit = Math.min(args.limit || 20, 50);
+  const url = `https://36kr.com/api/newsflash?per_page=${limit}`;
+  try {
+    const data = await httpGet(url, 10000);
+    const items: Array<{title: string; desc: string; url: string}> = (data?.data?.items || []).slice(0, limit).map((item: any) => ({
+      title: item.title || '',
+      desc: item.description || '',
+      url: `https://36kr.com/newsflashes/${item.id || ''}`,
+    }));
+    if (items.length > 0) {
+      return `36氪快讯 (${items.length}条):\n\n${items.map((item, i) =>
+        `[${i + 1}] ${item.title}${item.desc ? '\n   ' + item.desc.slice(0, 100) : ''}\n   链接: ${item.url}`
+      ).join('\n\n')}`;
+    }
+  } catch {
+    // fallback
+  }
+
+  // Fallback: 通过 RSS feed
+  try {
+    const rssUrl = 'https://36kr.com/feed';
+    const resp = await fetch(rssUrl, {
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+    });
+    const text = await resp.text();
+    const items: { title: string; url: string }[] = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+    let match;
+    while ((match = itemRegex.exec(text)) !== null && items.length < limit) {
+      const entry = match[1];
+      const titleMatch = entry.match(/<title><!\[CDATA\[(.+?)\]\]><\/title>/);
+      const linkMatch = entry.match(/<link>(.*?)<\/link>/);
+      if (titleMatch && linkMatch) {
+        items.push({ title: titleMatch[1], url: linkMatch[1] });
+      }
+    }
+    return `36氪快讯 (${items.length}条):\n\n${items.map((item, i) =>
+      `[${i + 1}] ${item.title}\n   链接: ${item.url}`
+    ).join('\n\n')}`;
+  } catch (err) {
+    return `获取 36氪快讯失败: ${(err as Error).message}`;
+  }
+}
+
+// ==================== 导出为 ToolDefinition[] ====================
+
+/**
+ * 将 OpenCliToolDef 转换为 WorkerClaw ToolDefinition
+ */
+function toToolDefinition(def: OpenCliToolDef, level: PermissionLevel = 'limited'): ToolDefinition {
+  const properties: Record<string, any> = {};
+  const required: string[] = [];
+
+  for (const [key, arg] of Object.entries(def.args)) {
+    properties[key] = {
+      type: arg.type === 'number' ? 'number' : 'string',
+      description: arg.description,
+    };
+    if (arg.required) {
+      required.push(key);
+    }
+  }
+
+  const executor: ToolExecutorFn = async (params, context) => {
+    const toolCallId = (context as any)?.toolCallId || 'opencli';
+    try {
+      const result = await def.execute(params || {});
+      return { toolCallId, success: true, content: result };
+    } catch (err) {
+      logger.error(`OpenCLI 工具执行失败: ${def.name}`, { error: (err as Error).message });
+      return {
+        toolCallId,
+        success: false,
+        content: `获取数据失败: ${(err as Error).message}`,
+        error: (err as Error).message,
+      };
+    }
+  };
+
+  return {
+    name: def.name,
+    description: def.description,
+    requiredLevel: level,
+    parameters: {
+      type: 'object',
+      properties,
+      ...(required.length > 0 ? { required } : {}),
+    },
+    executor,
+  };
+}
+
+/**
+ * 获取所有 OpenCLI 工具定义
+ */
+export function getOpenCliToolDefinitions(): ToolDefinition[] {
+  return OPENCLI_TOOLS.map(def => toToolDefinition(def));
+}
+
+/**
+ * 获取所有 OpenCLI 工具的元信息（名称、描述、site）
+ * 用于调试和日志
+ */
+export function getOpenCliToolMeta(): Array<{ name: string; description: string; site: string; command: string }> {
+  return OPENCLI_TOOLS.map(def => ({
+    name: def.name,
+    description: def.description,
+    site: def.site,
+    command: def.command,
+  }));
+}
+
+/**
+ * 获取 web_cli 通用代理工具定义
+ *
+ * 通过平台代理 API (/api/cli/:site/:cmd) 调用 OpenCLI 命令，
+ * 支持所有平台已注册的 CLI 命令，无需在 WorkerClaw 内直连外部 API。
+ *
+ * 优点：
+ * - 统一走平台代理，避免 Docker 容器内网络策略问题
+ * - 平台可以做速率限制和缓存
+ * - 新增 CLI 命令无需发布 WorkerClaw 新版本
+ */
+export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
+  const baseUrl = platformUrl || 'https://www.miniabc.top';
+
+  const executor: ToolExecutorFn = async (params, context) => {
+    const toolCallId = (context as any)?.toolCallId || 'web_cli';
+
+    const { site, command, query, limit, sort, ...extra } = params || {};
+
+    if (!site || !command) {
+      return { toolCallId, success: false, content: '缺少参数: site 和 command 是必填项。可用命令列表: hackernews/top, hackernews/search, stackoverflow/hot, devto/top, v2ex/hot, reddit/hot, wikipedia/search 等', error: 'missing_params' };
+    }
+
+    try {
+      // 构建查询参数
+      const searchParams = new URLSearchParams();
+      if (query) searchParams.set('q', String(query));
+      if (limit) searchParams.set('limit', String(limit));
+      if (sort) searchParams.set('sort', String(sort));
+      // 传递额外参数
+      for (const [key, value] of Object.entries(extra)) {
+        if (value !== undefined && value !== null) searchParams.set(key, String(value));
+      }
+
+      const apiUrl = `${baseUrl}/api/cli/${encodeURIComponent(site)}/${encodeURIComponent(command)}?${searchParams.toString()}`;
+
+      const response = await fetch(apiUrl, {
+        headers: {
+          'User-Agent': 'WorkerClaw/1.0',
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(Math.min((context as any)?.remainingMs || 30000, 30000)),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        return { toolCallId, success: false, content: `API 请求失败: HTTP ${response.status} ${errorText}`, error: `http_${response.status}` };
+      }
+
+      const result = await response.json() as { success: boolean; data: any; error?: string; duration_ms?: number };
+
+      if (!result.success || !result.data) {
+        return { toolCallId, success: false, content: result.error || 'API 返回空数据', error: 'empty_result' };
+      }
+
+      // 格式化输出
+      const data = result.data;
+      let content: string;
+
+      if (Array.isArray(data)) {
+        if (data.length === 0) {
+          content = `${site}/${command}: 暂无数据`;
+        } else {
+          const items = data.map((item: any, i: number) => {
+            const parts: string[] = [];
+            for (const [k, v] of Object.entries(item)) {
+              if (v === undefined || v === null || v === '') continue;
+              const key = k as string;
+              if (key === 'url') continue; // URL 单独放末尾
+              parts.push(`${key}: ${v}`);
+            }
+            const url = item.url ? `\n   链接: ${item.url}` : '';
+            return `[${i + 1}] ${parts.join(' | ')}${url}`;
+          });
+          content = `${site}/${command} (${data.length}条, ${result.duration_ms || 0}ms):\n\n${items.join('\n')}`;
+        }
+      } else if (typeof data === 'object') {
+        // 单个对象（如 Wikipedia summary）
+        const lines = Object.entries(data as Record<string, any>)
+          .filter(([k, v]) => v !== undefined && v !== null)
+          .map(([k, v]) => `${k}: ${v}`);
+        content = `${site}/${command}:\n\n${lines.join('\n')}`;
+      } else {
+        content = String(data);
+      }
+
+      return { toolCallId, success: true, content };
+
+    } catch (err) {
+      logger.error(`web_cli 执行失败: ${site}/${command}`, { error: (err as Error).message });
+      return { toolCallId, success: false, content: `web_cli 执行失败: ${(err as Error).message}`, error: (err as Error).message };
+    }
+  };
+
+  return {
+    name: 'web_cli',
+    description: `通过平台代理调用 OpenCLI 命令获取互联网数据。支持多种网站的热门内容、搜索等功能。
+可用命令格式: site/command，如 hackernews/top, stackoverflow/hot, devto/top, v2ex/hot, reddit/hot, wikipedia/search, arxiv/search, producthunt/today, steam/top-sellers, 36kr/hot 等。
+参数: site (必填), command (必填), query (搜索关键词), limit (返回条数)`,
+    requiredLevel: 'limited',
+    parameters: {
+      type: 'object',
+      properties: {
+        site: { type: 'string', description: '网站名称 (如 hackernews, stackoverflow, devto, v2ex, reddit, wikipedia, arxiv, producthunt, steam, 36kr, hf, lobsters)' },
+        command: { type: 'string', description: '命令名称 (如 top, hot, new, search, today 等)' },
+        query: { type: 'string', description: '搜索关键词（search 类命令必填）' },
+        limit: { type: 'number', description: '返回条数（默认 20）' },
+        sort: { type: 'string', description: '排序方式（如 relevance, date）' },
+      },
+      required: ['site', 'command'],
+    },
+    executor,
+  };
+}

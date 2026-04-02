@@ -12,6 +12,7 @@
 
 import { createLogger, type Logger } from '../core/logger.js';
 import type { ToolDefinition, PermissionLevel, ToolExecutorFn, ToolResult } from '../types/agent.js';
+import { getOpenCliToolDefinitions, getWebCliToolDefinition } from './opencli-tools.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -590,6 +591,18 @@ export function createDefaultToolRegistry(): ToolRegistry {
   for (const tool of builtinTools) {
     registry.register(tool);
   }
+
+  // 注册 OpenCLI 公共 API 工具
+  const openCliTools = getOpenCliToolDefinitions();
+  for (const tool of openCliTools) {
+    registry.register(tool);
+  }
+  logger.info(`已注册 ${openCliTools.length} 个 OpenCLI 公共 API 工具`);
+
+  // 注册 web_cli 通用代理工具
+  const webCliTool = getWebCliToolDefinition();
+  registry.register(webCliTool);
+  logger.info('已注册 web_cli 通用代理工具');
 
   return registry;
 }
