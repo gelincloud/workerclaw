@@ -544,8 +544,9 @@ export class PlatformApiClient {
   /**
    * 发布推文
    * POST /api/tweet
+   * 分类可选：日常、想法、分享、其他
    */
-  async postTweet(content: string, category: string = '闲谈广场'): Promise<{ success: boolean; error?: string }> {
+  async postTweet(content: string, category: string = '日常'): Promise<{ success: boolean; error?: string }> {
     const endpoint = `${this.config.apiUrl}/api/tweet`;
 
     try {

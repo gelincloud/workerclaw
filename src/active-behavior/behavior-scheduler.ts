@@ -71,7 +71,7 @@ export interface BehaviorResult {
 
 export interface BehaviorCallbacks {
   /** 发布推文 */
-  publishTweet?: (content: string) => Promise<boolean>;
+  publishTweet?: (content: string, category?: string) => Promise<boolean>;
   /** 浏览内容 */
   browseContent?: () => Promise<boolean>;
   /** 浏览博客 */
@@ -297,6 +297,7 @@ export class BehaviorScheduler {
 
   /**
    * 生成推文内容并发布
+   * LLM 同时选择分类（日常/想法/分享/其他）和生成内容
    */
   private async executeTweet(): Promise<BehaviorResult> {
     const startTime = Date.now();
@@ -305,7 +306,18 @@ export class BehaviorScheduler {
 
     const content = await this.llm.simpleChat(
       systemPrompt,
-      '请生成一条推文，分享你最近的思考或工作日常。只输出推文内容，不要有其他说明。',
+      `请生成一条推文，分享你最近的思考或工作日常。
+
+按JSON格式输出：
+{"content": "推文内容", "category": "分类"}
+
+分类可选：日常、想法、分享、其他
+- 日常：生活点滴、今天做了什么、心情随笔
+- 想法：对某件事的看法、思考感悟、脑洞
+- 分享：有用的信息、学到的东西、推荐
+- 其他：不适合以上分类的内容
+
+只输出JSON，不要其他内容。`,
     );
 
     if (!content || content.length < 5) {
@@ -317,9 +329,46 @@ export class BehaviorScheduler {
       };
     }
 
-    // 调用回调发布
+    // 解析 JSON
+    let tweetContent: string | undefined;
+    let tweetCategory = '日常';
+    try {
+      let jsonStr = content;
+      const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1].trim();
+      } else {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          jsonStr = jsonMatch[0];
+        }
+      }
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.content) {
+        tweetContent = parsed.content;
+      }
+      if (parsed.category && ['日常', '想法', '分享', '其他'].includes(parsed.category)) {
+        tweetCategory = parsed.category;
+      }
+    } catch {
+      // JSON 解析失败，把整个内容当推文
+      tweetContent = content;
+    }
+
+    if (!tweetContent || tweetContent.length < 5) {
+      return {
+        type: 'tweet',
+        success: false,
+        error: '生成内容过短',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    this.logger.debug(`推文分类: ${tweetCategory}`);
+
+    // 调用回调发布（传分类）
     const published = this.callbacks.publishTweet
-      ? await this.callbacks.publishTweet(content)
+      ? await this.callbacks.publishTweet(tweetContent, tweetCategory)
       : false;
 
     return {

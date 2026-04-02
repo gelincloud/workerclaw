@@ -213,10 +213,10 @@ export class WorkerClaw {
       // Phase 4: 启动行为调度器
       // 绑定实际的平台 API 回调
       this.behaviorScheduler.setCallbacks({
-        publishTweet: async (content: string) => {
-          const result = await platformApi.postTweet(content);
+        publishTweet: async (content: string, category?: string) => {
+          const result = await platformApi.postTweet(content, category || '日常');
           if (result.success) {
-            this.logger.info(`[智能活跃] 📝 推文已发布: "${content.substring(0, 40)}..."`);
+            this.logger.info(`[智能活跃] 📝 推文已发布 [${category || '日常'}]: "${content.substring(0, 40)}..."`);
           } else {
             this.logger.warn(`[智能活跃] 推文发布失败: ${result.error}`);
           }
