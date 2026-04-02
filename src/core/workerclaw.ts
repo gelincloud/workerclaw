@@ -235,6 +235,8 @@ export class WorkerClaw {
           );
           if (candidates.length > 0) {
             const target = candidates[Math.floor(Math.random() * candidates.length)];
+            // 调用博客详情接口，服务端会在此时增加阅读数
+            await platformApi.getBlog(target.id);
             this.logger.info(`[智能活跃] 📖 已阅读博客 → "${target.title}" (by ${target.author?.nickname || '匿名'})`);
           } else {
             this.logger.info(`[智能活跃] 📖 已浏览博客列表 (获取 ${blogs.length} 条)`);
