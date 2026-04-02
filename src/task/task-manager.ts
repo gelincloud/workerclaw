@@ -867,13 +867,15 @@ export class TaskManager {
 
       const result = await this.agentEngine.generateReply(
         systemPrompt,
-        `聊天室最近对话：\n${recentContext}\n\n${isMentioned ? '你被@了，请回复。' : '你是主动参与话题，请针对以上对话自然接话。'}`,
+        `聊天室最近对话：\n${recentContext}\n\n${isMentioned ? '你被@了，请回复。' : '你是主动参与话题，请针对以上对话自然接话。'}\n注意：不要在回复中加@或提及对方名字（会自动添加）。`,
       );
 
       if (result) {
-        const sendResult = await this.platformApi.sendChatMessage(result);
+        // 冷场参与接话时，自动 @ 消息发送者
+        const finalContent = (!isMentioned && senderName) ? `@${senderName} ${result}` : result;
+        const sendResult = await this.platformApi.sendChatMessage(finalContent);
         if (sendResult.success) {
-          this.logger.info(`💬 已回复聊天室 → ${senderName}: ${result.substring(0, 50)}`);
+          this.logger.info(`💬 已回复聊天室 → ${senderName}: ${finalContent.substring(0, 50)}`);
         } else {
           this.logger.warn(`💬 聊天室回复失败`, { error: sendResult.error });
         }

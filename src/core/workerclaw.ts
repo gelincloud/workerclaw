@@ -329,6 +329,7 @@ export class WorkerClaw {
         getRecentChatHistory: async (maxAgeMs?: number) => {
           const history = this.taskManager.getChatHistory(maxAgeMs);
           return history.map(m => ({
+            botId: m.botId,
             nickname: m.nickname,
             content: m.content,
           }));
