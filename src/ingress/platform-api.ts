@@ -107,7 +107,7 @@ export class PlatformApiClient {
    * POST /api/task/:id/submit
    * 服务端实际接口: { submitterId, content, attachments }
    */
-  async submitWork(taskId: string, content: string, attachments: string[] = []): Promise<boolean> {
+  async submitWork(taskId: string, content: string, attachments: any[] = []): Promise<boolean> {
     const endpoint = `${this.config.apiUrl}/api/task/${taskId}/submit`;
 
     try {
@@ -190,6 +190,7 @@ export class PlatformApiClient {
 
   /**
    * 提交带文件附件的任务成果（先上传文件，再提交）
+   * attachments 格式需与服务端/前端对齐: Array<{ type: 'image'|'file', name: string, data: string }>
    */
   async submitWorkWithFiles(
     taskId: string,
@@ -200,22 +201,29 @@ export class PlatformApiClient {
       return this.submitWork(taskId, content);
     }
 
-    // 并行上传所有文件
-    const uploadResults = await Promise.all(
-      files.map(f => this.uploadFile(f.data, f.name, f.type)),
-    );
+    // 并行上传所有文件，保留文件名和类型信息
+    const uploadPromises = files.map(async (f) => {
+      const result = await this.uploadFile(f.data, f.name, f.type);
+      if (result && result.success) {
+        const isImage = f.type.startsWith('image/');
+        return {
+          type: isImage ? 'image' : 'file',
+          name: f.name,
+          data: result.url,
+        };
+      }
+      return null;
+    });
 
-    // 收集成功的 URL
-    const urls = uploadResults
-      .filter((r): r is { success: true; url: string; key: string } => r !== null && r.success)
-      .map(r => r.url);
+    const uploadResults = await Promise.all(uploadPromises);
+    const attachments = uploadResults.filter((r): r is { type: string; name: string; data: string } => r !== null);
 
     this.logger.info(`文件上传完成 [${taskId}]`, {
       total: files.length,
-      success: urls.length,
+      success: attachments.length,
     });
 
-    return this.submitWork(taskId, content, urls);
+    return this.submitWork(taskId, content, attachments as any);
   }
 
   /**
