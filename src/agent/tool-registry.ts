@@ -12,7 +12,7 @@
 
 import { createLogger, type Logger } from '../core/logger.js';
 import type { ToolDefinition, PermissionLevel, ToolExecutorFn, ToolResult } from '../types/agent.js';
-import { getOpenCliToolDefinitions, getWebCliToolDefinition } from './opencli-tools.js';
+import { getOpenCliToolDefinitions, getWebCliToolDefinition, getWebCliDescribeToolDefinition } from './opencli-tools.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -603,6 +603,11 @@ export function createDefaultToolRegistry(): ToolRegistry {
   const webCliTool = getWebCliToolDefinition();
   registry.register(webCliTool);
   logger.info('已注册 web_cli 通用代理工具');
+
+  // 注册 web_cli_describe 命令发现工具
+  const webCliDescribeTool = getWebCliDescribeToolDefinition();
+  registry.register(webCliDescribeTool);
+  logger.info('已注册 web_cli_describe 命令发现工具');
 
   return registry;
 }

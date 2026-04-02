@@ -798,13 +798,15 @@ export function getOpenCliToolMeta(): Array<{ name: string; description: string;
 /**
  * 获取 web_cli 通用代理工具定义
  *
- * 通过平台代理 API (/api/cli/:site/:cmd) 调用 OpenCLI 命令，
- * 支持所有平台已注册的 CLI 命令，无需在 WorkerClaw 内直连外部 API。
+ * 通过平台代理 API 调用 OpenCLI 命令（阶段三：平台中心化架构）。
+ * 优先使用 POST /api/cli/execute（支持 taskId、幂等性、写操作），
+ * 自动回退到 GET /api/cli/:site/:cmd（只读兼容）。
  *
  * 优点：
  * - 统一走平台代理，避免 Docker 容器内网络策略问题
- * - 平台可以做速率限制和缓存
+ * - 平台提供缓存、限流、审计
  * - 新增 CLI 命令无需发布 WorkerClaw 新版本
+ * - 支持 browser/auth 策略（塘主登录态注入）
  */
 export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
   const baseUrl = platformUrl || 'https://www.miniabc.top';
@@ -812,76 +814,69 @@ export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
   const executor: ToolExecutorFn = async (params, context) => {
     const toolCallId = (context as any)?.toolCallId || 'web_cli';
 
-    const { site, command, query, limit, sort, ...extra } = params || {};
+    const { site, command, query, limit, sort, taskId, dryRun, ...extra } = params || {};
 
     if (!site || !command) {
-      return { toolCallId, success: false, content: '缺少参数: site 和 command 是必填项。可用命令列表: hackernews/top, hackernews/search, stackoverflow/hot, devto/top, v2ex/hot, reddit/hot, wikipedia/search 等', error: 'missing_params' };
+      return { toolCallId, success: false, content: '缺少参数: site 和 command 是必填项。先调用 web_cli_describe 查看可用命令。', error: 'missing_params' };
+    }
+
+    // 构建 args 对象
+    const args: Record<string, any> = {};
+    if (query) args.q = query;
+    if (limit) args.limit = limit;
+    if (sort) args.sort = sort;
+    for (const [key, value] of Object.entries(extra)) {
+      if (value !== undefined && value !== null) args[key] = value;
     }
 
     try {
-      // 构建查询参数
-      const searchParams = new URLSearchParams();
-      if (query) searchParams.set('q', String(query));
-      if (limit) searchParams.set('limit', String(limit));
-      if (sort) searchParams.set('sort', String(sort));
-      // 传递额外参数
-      for (const [key, value] of Object.entries(extra)) {
-        if (value !== undefined && value !== null) searchParams.set(key, String(value));
-      }
+      // 优先尝试 POST /api/cli/execute
+      const executeUrl = `${baseUrl}/api/cli/execute`;
+      const body: Record<string, any> = { site, command, args };
+      if (taskId) body.taskId = taskId;
+      if (dryRun) body.dryRun = true;
 
-      const apiUrl = `${baseUrl}/api/cli/${encodeURIComponent(site)}/${encodeURIComponent(command)}?${searchParams.toString()}`;
+      const headers: Record<string, string> = {
+        'User-Agent': 'WorkerClaw/1.0',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
 
-      const response = await fetch(apiUrl, {
-        headers: {
-          'User-Agent': 'WorkerClaw/1.0',
-          'Accept': 'application/json',
-        },
-        signal: AbortSignal.timeout(Math.min((context as any)?.remainingMs || 30000, 30000)),
+      // 如果有 botId 认证信息，注入 header
+      const botId = (context as any)?.botId;
+      if (botId) headers['X-Bot-Id'] = botId;
+
+      const timeoutMs = Math.min((context as any)?.remainingMs || 30000, 30000);
+
+      const response = await fetch(executeUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
       });
+
+      // 如果 POST 失败（比如 405），自动回退到 GET 兼容模式
+      if (!response.ok && response.status === 405) {
+        return await fallbackGetRequest(baseUrl, site, command, args, toolCallId, timeoutMs, headers);
+      }
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
         return { toolCallId, success: false, content: `API 请求失败: HTTP ${response.status} ${errorText}`, error: `http_${response.status}` };
       }
 
-      const result = await response.json() as { success: boolean; data: any; error?: string; duration_ms?: number };
+      const result = await response.json() as { success: boolean; data: any; error?: string; duration_ms?: number; strategy?: string; _fromCache?: boolean; dryRun?: boolean; command?: { site: string; command: string; strategy: string }; message?: string };
 
-      if (!result.success || !result.data) {
-        return { toolCallId, success: false, content: result.error || 'API 返回空数据', error: 'empty_result' };
+      if (dryRun && result.dryRun) {
+        return { toolCallId, success: true, content: `试运行: ${result.command?.site}/${result.command?.command} (strategy=${result.command?.strategy})\n${result.message || ''}` };
+      }
+
+      if (!result.success) {
+        return { toolCallId, success: false, content: result.error || 'API 执行失败', error: result.error };
       }
 
       // 格式化输出
-      const data = result.data;
-      let content: string;
-
-      if (Array.isArray(data)) {
-        if (data.length === 0) {
-          content = `${site}/${command}: 暂无数据`;
-        } else {
-          const items = data.map((item: any, i: number) => {
-            const parts: string[] = [];
-            for (const [k, v] of Object.entries(item)) {
-              if (v === undefined || v === null || v === '') continue;
-              const key = k as string;
-              if (key === 'url') continue; // URL 单独放末尾
-              parts.push(`${key}: ${v}`);
-            }
-            const url = item.url ? `\n   链接: ${item.url}` : '';
-            return `[${i + 1}] ${parts.join(' | ')}${url}`;
-          });
-          content = `${site}/${command} (${data.length}条, ${result.duration_ms || 0}ms):\n\n${items.join('\n')}`;
-        }
-      } else if (typeof data === 'object') {
-        // 单个对象（如 Wikipedia summary）
-        const lines = Object.entries(data as Record<string, any>)
-          .filter(([k, v]) => v !== undefined && v !== null)
-          .map(([k, v]) => `${k}: ${v}`);
-        content = `${site}/${command}:\n\n${lines.join('\n')}`;
-      } else {
-        content = String(data);
-      }
-
-      return { toolCallId, success: true, content };
+      return { toolCallId, success: true, content: formatCliResult(site, command, result.data, result.duration_ms, result.strategy, result._fromCache) };
 
     } catch (err) {
       logger.error(`web_cli 执行失败: ${site}/${command}`, { error: (err as Error).message });
@@ -891,20 +886,170 @@ export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
 
   return {
     name: 'web_cli',
-    description: `通过平台代理调用 OpenCLI 命令获取互联网数据。支持多种网站的热门内容、搜索等功能。
-可用命令格式: site/command，如 hackernews/top, stackoverflow/hot, devto/top, v2ex/hot, reddit/hot, wikipedia/search, arxiv/search, producthunt/today, steam/top-sellers, 36kr/hot 等。
-参数: site (必填), command (必填), query (搜索关键词), limit (返回条数)`,
+    description: `通过平台代理调用 OpenCLI 命令获取互联网数据。支持 fetch（公开API）、browser（网页渲染）、auth（带登录态）三种策略。
+可用命令格式: site/command，如 hackernews/top, stackoverflow/hot, v2ex/hot, reddit/hot, wikipedia/search, weibo/profile, browser/fetch 等。
+使用 web_cli_describe 工具查看完整命令列表。
+参数: site (必填), command (必填), query (搜索关键词), limit (返回条数), taskId (关联任务ID), dryRun (试运行)`,
     requiredLevel: 'limited',
     parameters: {
       type: 'object',
       properties: {
-        site: { type: 'string', description: '网站名称 (如 hackernews, stackoverflow, devto, v2ex, reddit, wikipedia, arxiv, producthunt, steam, 36kr, hf, lobsters)' },
-        command: { type: 'string', description: '命令名称 (如 top, hot, new, search, today 等)' },
+        site: { type: 'string', description: '网站/引擎名称 (如 hackernews, stackoverflow, v2ex, reddit, wikipedia, arxiv, weibo, browser 等)' },
+        command: { type: 'string', description: '命令名称 (如 top, hot, new, search, post, fetch 等)' },
         query: { type: 'string', description: '搜索关键词（search 类命令必填）' },
         limit: { type: 'number', description: '返回条数（默认 20）' },
         sort: { type: 'string', description: '排序方式（如 relevance, date）' },
+        taskId: { type: 'string', description: '关联任务 ID（用于审计追踪）' },
+        dryRun: { type: 'boolean', description: '试运行模式（不实际执行，只校验参数）' },
       },
       required: ['site', 'command'],
+    },
+    executor,
+  };
+}
+
+/**
+ * GET 兼容回退
+ */
+async function fallbackGetRequest(baseUrl: string, site: string, command: string, args: Record<string, any>, toolCallId: string, timeoutMs: number, headers: Record<string, string>): Promise<ToolResult> {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(args)) {
+    if (value !== undefined && value !== null) searchParams.set(key, String(value));
+  }
+
+  const apiUrl = `${baseUrl}/api/cli/${encodeURIComponent(site)}/${encodeURIComponent(command)}?${searchParams.toString()}`;
+  const response = await fetch(apiUrl, {
+    headers,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    return { toolCallId, success: false, content: `API 请求失败: HTTP ${response.status} ${errorText}`, error: `http_${response.status}` };
+  }
+
+  const result = await response.json() as { success: boolean; data: any; error?: string; duration_ms?: number };
+
+  if (!result.success) {
+    return { toolCallId, success: false, content: result.error || 'API 返回空数据', error: result.error };
+  }
+
+  return { toolCallId, success: true, content: formatCliResult(site, command, result.data, result.duration_ms) };
+}
+
+/**
+ * 格式化 CLI 命令返回结果
+ */
+function formatCliResult(site: string, command: string, data: any, duration_ms?: number, strategy?: string, fromCache?: boolean): string {
+  const cacheTag = fromCache ? ' [缓存]' : '';
+  const strategyTag = strategy ? ` [${strategy}]` : '';
+
+  if (Array.isArray(data)) {
+    if (data.length === 0) {
+      return `${site}/${command}: 暂无数据${strategyTag}${cacheTag}`;
+    }
+    const items = data.map((item: any, i: number) => {
+      const parts: string[] = [];
+      for (const [k, v] of Object.entries(item)) {
+        if (v === undefined || v === null || v === '') continue;
+        const key = k as string;
+        if (key === 'url') continue;
+        parts.push(`${key}: ${v}`);
+      }
+      const url = item.url ? `\n   链接: ${item.url}` : '';
+      return `[${i + 1}] ${parts.join(' | ')}${url}`;
+    });
+    return `${site}/${command} (${data.length}条, ${duration_ms || 0}ms${strategyTag}${cacheTag}):\n\n${items.join('\n')}`;
+  } else if (typeof data === 'object' && data !== null) {
+    const lines = Object.entries(data as Record<string, any>)
+      .filter(([k, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k}: ${typeof v === 'string' ? v.slice(0, 500) : JSON.stringify(v)}`);
+    return `${site}/${command}${strategyTag}${cacheTag}:\n\n${lines.join('\n')}`;
+  } else {
+    return `${site}/${command}: ${data}`;
+  }
+}
+
+/**
+ * 获取 web_cli_describe 工具定义
+ *
+ * 让 Agent 动态发现平台当前支持的所有 CLI 命令，
+ * 包含策略类型、是否只读、参数 schema 等元信息。
+ * 无需发布新版本即可感知平台新增命令。
+ */
+export function getWebCliDescribeToolDefinition(platformUrl?: string): ToolDefinition {
+  const baseUrl = platformUrl || 'https://www.miniabc.top';
+
+  const executor: ToolExecutorFn = async (params, context) => {
+    const toolCallId = (context as any)?.toolCallId || 'web_cli_describe';
+
+    try {
+      const response = await fetch(`${baseUrl}/api/cli/commands`, {
+        headers: {
+          'User-Agent': 'WorkerClaw/1.0',
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        return { toolCallId, success: false, content: `命令发现失败: HTTP ${response.status}`, error: `http_${response.status}` };
+      }
+
+      const result = await response.json() as { success: boolean; commands: any[]; stats: { total: number; fetch: number; browser: number; auth: number } };
+
+      if (!result.success || !result.commands) {
+        return { toolCallId, success: false, content: '命令列表为空', error: 'empty_commands' };
+      }
+
+      // 过滤
+      const filterStrategy = params.strategy as string | undefined;
+      const filterSite = params.site as string | undefined;
+
+      let commands = result.commands;
+      if (filterStrategy) {
+        commands = commands.filter((c: any) => c.strategy === filterStrategy);
+      }
+      if (filterSite) {
+        commands = commands.filter((c: any) => c.site === filterSite);
+      }
+
+      // 格式化
+      const lines = commands.map((c: any) => {
+        const readOnly = c.isReadOnly ? '只读' : '写操作';
+        return `  ${c.site}/${c.command}  [${c.strategy}]  ${readOnly}  — ${c.description}`;
+      });
+
+      const statsInfo = `总计: ${result.stats.total} 个命令 (fetch=${result.stats.fetch}, browser=${result.stats.browser}, auth=${result.stats.auth})`;
+
+      const content = [
+        `CLI 命令列表${filterStrategy ? ` [${filterStrategy}]` : ''}${filterSite ? ` [${filterSite}]` : ''}:`,
+        statsInfo,
+        '',
+        ...lines,
+        '',
+        '使用 web_cli 工具调用: { site, command, query, limit }',
+      ].join('\n');
+
+      return { toolCallId, success: true, content };
+
+    } catch (err) {
+      logger.error('web_cli_describe 执行失败', { error: (err as Error).message });
+      return { toolCallId, success: false, content: `命令发现失败: ${(err as Error).message}`, error: (err as Error).message };
+    }
+  };
+
+  return {
+    name: 'web_cli_describe',
+    description: `查看平台当前可用的 CLI 命令列表。动态发现平台支持的所有命令，包括 fetch（公开API）、browser（网页渲染）、auth（带登录态）三种策略。
+参数: strategy (可选过滤: fetch/browser/auth), site (可选过滤: 站点名)`,
+    requiredLevel: 'read_only',
+    parameters: {
+      type: 'object',
+      properties: {
+        strategy: { type: 'string', enum: ['fetch', 'browser', 'auth'], description: '按策略过滤' },
+        site: { type: 'string', description: '按站点名过滤' },
+      },
     },
     executor,
   };
