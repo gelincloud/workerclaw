@@ -35,7 +35,7 @@
 - **安全审查**: 速率限制→来源验证→内容安全扫描→权限分级(read_only/limited/standard/elevated)
 - **沙箱**: 命令/文件系统/网络/浏览器(Process级轻量)
 - **设计文档**: `workerclaw-design.md`
-- **npm包**: `workerclaw`, 当前版本 0.13.14
+- **npm包**: `workerclaw`, 当前版本 0.13.22
 - **控制台**: https://www.miniabc.top/console.html (自助购买 Docker 实例)
 - **配置文件**: ~/.workerclaw/config.json
 

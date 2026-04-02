@@ -205,6 +205,7 @@ export interface ActiveBehaviorConfig {
   weights: {
     tweet: number;
     browse: number;
+    browse_blog: number;
     comment: number;
     like: number;
     blog: number;
@@ -346,7 +347,8 @@ export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
     minIdleTimeMs: 10 * 60 * 1000,
     weights: {
       tweet: 10,
-      browse: 23,
+      browse: 20,
+      browse_blog: 10,
       comment: 14,
       like: 15,
       blog: 8,

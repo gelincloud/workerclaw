@@ -90,6 +90,11 @@ export class TaskManager {
   /** 租赁状态 */
   private rentalState: RentalState = { active: false };
 
+  /** 聊天室消息历史（用于冷场检测） */
+  private chatHistory: Array<{ botId: string; nickname?: string; content: string; timestamp: number }> = [];
+  private chatHistoryMaxSize = 20; // 最多保留20条历史
+  private chatSilenceThresholdMs = 10 * 60 * 1000; // 10分钟无消息视为冷场
+
   constructor(config: TaskManagerConfig, eventBus: EventBus, securityGate: SecurityGate) {
     this.config = config;
     this.eventBus = eventBus;
@@ -276,6 +281,42 @@ export class TaskManager {
         const commentMsg = message.payload || message.data;
         if (!commentMsg) return;
         this.logger.info(`💬 收到评论通知`, { type: msgType });
+        break;
+      }
+
+      case 'blog_comment': {
+        // 有人评论了自己发的博客
+        const blogCommentMsg = message.payload || message.data;
+        if (!blogCommentMsg) return;
+
+        this.logger.info(`📝 收到博客评论`, {
+          blogId: blogCommentMsg.blogId,
+          commenter: blogCommentMsg.commenter?.nickname || blogCommentMsg.commenterId,
+          content: blogCommentMsg.content?.substring(0, 50),
+        });
+
+        // 异步处理博客评论回复
+        this.handleBlogCommentReply(blogCommentMsg).catch(err => {
+          this.logger.error('博客评论回复异常', err);
+        });
+        break;
+      }
+
+      case 'blog_reply': {
+        // 有人回复了自己在博客下的评论
+        const blogReplyMsg = message.payload || message.data;
+        if (!blogReplyMsg) return;
+
+        this.logger.info(`📝 收到博客评论回复`, {
+          blogId: blogReplyMsg.blogId,
+          replier: blogReplyMsg.replier?.nickname || blogReplyMsg.replierId,
+          content: blogReplyMsg.content?.substring(0, 50),
+        });
+
+        // 回复的回复通常不需要再回，除非有明确问题
+        this.handleBlogReplyNotification(blogReplyMsg).catch(err => {
+          this.logger.error('博客回复处理异常', err);
+        });
         break;
       }
 
@@ -753,6 +794,10 @@ export class TaskManager {
   /**
    * 处理公共聊天室消息回复
    * 使用 LLM 生成自然回复，支持 @提及和闲聊
+   * 
+   * 改进：
+   * 1. 被 @ 时直接回复
+   * 2. 未被 @ 时，如果群聊冷场（10分钟无消息/无互动），一定概率参与
    */
   private async handleChatMessageReply(chatMsg: any): Promise<void> {
     try {
@@ -761,18 +806,46 @@ export class TaskManager {
       const content = chatMsg.content || '';
       const botId = this.config.platform.botId;
 
+      // 记录聊天历史（用于冷场检测）
+      this.recordChatHistory(chatMsg);
+
       // 检查是否 @ 了自己（内容包含 botId 或 bot 名称）
       const botName = personality.name || '打工虾';
       const isMentioned = content.includes(botId) ||
         content.includes(`@${botName}`) ||
         content.includes(botName);
 
-      // 只回复被 @ 的消息或包含自己名字的消息
-      // 纯闲聊消息不回复，避免刷屏
-      if (!isMentioned) {
-        this.logger.debug('聊天消息未 @ 自己，跳过回复');
+      // 判断是否应该回复
+      let shouldReply = false;
+      let replyReason = '';
+
+      if (isMentioned) {
+        // 被 @ 时直接回复
+        shouldReply = true;
+        replyReason = '被@提及';
+      } else {
+        // 未被 @ 时，检测冷场
+        const silenceCheck = this.checkChatSilence();
+        if (silenceCheck.isSilent) {
+          // 冷场时有 30% 概率参与
+          const randomChance = Math.random();
+          if (randomChance < 0.3) {
+            shouldReply = true;
+            replyReason = `冷场参与（已${silenceCheck.silentMinutes}分钟无互动）`;
+          } else {
+            this.logger.debug(`聊天室冷场但本次不参与（概率未命中）`, {
+              silentMinutes: silenceCheck.silentMinutes,
+            });
+          }
+        }
+      }
+
+      if (!shouldReply) {
+        this.logger.debug('聊天消息未 @ 自己且非冷场，跳过回复');
         return;
       }
+
+      this.logger.info(`💬 准备回复聊天室 [${replyReason}]`, { sender: senderName });
 
       // 构建 LLM prompt
       const systemPrompt = personality.customSystemPrompt ||
@@ -783,11 +856,12 @@ export class TaskManager {
 - 回复自然、友好，1-3句话即可。
 - 如果有人问你能做什么，简要介绍能力，建议对方发任务给你。
 - 如果有人直接给你任务（不是在聊天室里问），引导对方通过私信或发单给你。
+- 如果是主动参与冷场话题，可以分享有趣的日常、提问、或抛出一个话题。
 - 只输出回复内容，不要加引号或前缀。`;
 
       const result = await this.agentEngine.generateReply(
         systemPrompt,
-        `聊天室里 ${senderName} 说：${content}`,
+        `聊天室里 ${senderName} 说：${content}${!isMentioned ? '\n\n（注意：对方没有@你，你是主动参与话题）' : ''}`,
       );
 
       if (result) {
@@ -802,6 +876,193 @@ export class TaskManager {
       }
     } catch (err) {
       this.logger.error('聊天室回复处理异常', err);
+    }
+  }
+
+  /**
+   * 记录聊天历史
+   */
+  private recordChatHistory(chatMsg: any): void {
+    this.chatHistory.push({
+      botId: chatMsg.botId,
+      nickname: chatMsg.author?.nickname,
+      content: chatMsg.content || '',
+      timestamp: Date.now(),
+    });
+
+    // 限制历史长度
+    if (this.chatHistory.length > this.chatHistoryMaxSize) {
+      this.chatHistory.shift();
+    }
+  }
+
+  /**
+   * 检测聊天室冷场
+   * 冷场条件：
+   * 1. 最近10分钟内没有消息（包括自己的）
+   * 2. 或者最近10分钟内的消息都是单方面的（没有相互@或互动）
+   */
+  private checkChatSilence(): { isSilent: boolean; silentMinutes: number } {
+    const now = Date.now();
+    const threshold = now - this.chatSilenceThresholdMs;
+
+    // 获取最近10分钟内的消息
+    const recentMessages = this.chatHistory.filter(m => m.timestamp >= threshold);
+
+    if (recentMessages.length === 0) {
+      // 没有最近消息，根据上一条消息时间判断
+      if (this.chatHistory.length === 0) {
+        return { isSilent: false, silentMinutes: 0 }; // 没有历史，无法判断
+      }
+      const lastMsg = this.chatHistory[this.chatHistory.length - 1];
+      const silentMinutes = Math.floor((now - lastMsg.timestamp) / 60000);
+      return { isSilent: silentMinutes >= 10, silentMinutes };
+    }
+
+    // 检查是否有互动（消息之间有@或回复）
+    let hasInteraction = false;
+    for (let i = 1; i < recentMessages.length; i++) {
+      const prev = recentMessages[i - 1];
+      const curr = recentMessages[i];
+      // 不同人发言 且 内容包含对方名字或@ = 有互动
+      if (prev.botId !== curr.botId) {
+        if (curr.content.includes(prev.nickname || '') ||
+            curr.content.includes(`@${prev.nickname || ''}`) ||
+            curr.content.includes(prev.botId)) {
+          hasInteraction = true;
+          break;
+        }
+      }
+    }
+
+    if (!hasInteraction && recentMessages.length < 3) {
+      // 消息少且无互动，视为冷场
+      return { isSilent: true, silentMinutes: 10 };
+    }
+
+    return { isSilent: false, silentMinutes: 0 };
+  }
+
+  /**
+   * 处理博客评论回复
+   * 
+   * 当有人评论自己发的博客时，决定是否回复：
+   * 1. 如果评论包含问题 → 应该回复
+   * 2. 如果评论是认同/夸奖 → 可以简单感谢
+   * 3. 如果评论是反驳/批评 → 看情况回复
+   */
+  private async handleBlogCommentReply(commentMsg: any): Promise<void> {
+    try {
+      const personality = this.config.personality;
+      const blogId = commentMsg.blogId;
+      const commentId = commentMsg.commentId || commentMsg.id;
+      const commenterName = commentMsg.commenter?.nickname || '用户';
+      const commentContent = commentMsg.content || '';
+      const botName = personality.name || '打工虾';
+
+      // 使用 LLM 判断是否需要回复
+      const systemPrompt = personality.customSystemPrompt ||
+        `你是${botName}，智工坊平台上的一名打工虾，语气${personality.tone || '友好热情'}。` +
+        (personality.bio ? `\n简介：${personality.bio}` : '') +
+        `\n\n【博客评论回复规则】
+- 有人评论了你的博客，你需要决定是否回复。
+- 如果评论包含问题、质疑或需要澄清的内容，应该回复。
+- 如果评论是认同、夸奖或简单的表情，可以回复感谢或跳过。
+- 回复要自然、友好，1-2句话即可。
+- 只输出 JSON 格式：{"shouldReply": true/false, "reply": "回复内容（如果shouldReply为true）"}
+- 不需要回复时，shouldReply 设为 false，reply 可为空。`;
+
+      const llmResult = await this.agentEngine.generateReply(
+        systemPrompt,
+        `你的博客收到一条评论：\n评论者：${commenterName}\n内容：${commentContent}\n\n请判断是否需要回复。`,
+      );
+
+      if (!llmResult) {
+        this.logger.debug('博客评论回复 LLM 返回空，跳过');
+        return;
+      }
+
+      // 解析 JSON
+      const jsonMatch = llmResult.match(/\{[\s\S]*?\}/);
+      if (!jsonMatch) {
+        this.logger.debug('博客评论回复 LLM 返回格式错误', { result: llmResult.substring(0, 100) });
+        return;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (!parsed.shouldReply || !parsed.reply) {
+        this.logger.debug('博客评论不需要回复或回复为空');
+        return;
+      }
+
+      // 发送回复
+      const replyResult = await this.platformApi.postBlogComment(blogId, parsed.reply, commentId);
+      if (replyResult.success) {
+        this.logger.info(`📝 已回复博客评论 → ${commenterName}: ${parsed.reply.substring(0, 50)}`);
+      } else {
+        this.logger.warn('博客评论回复发送失败', { error: replyResult.error });
+      }
+    } catch (err) {
+      this.logger.error('博客评论回复处理异常', err);
+    }
+  }
+
+  /**
+   * 处理博客回复的通知（有人回复了自己在博客下的评论）
+   * 
+   * 回复的回复通常不需要再回，除非有明确问题
+   */
+  private async handleBlogReplyNotification(replyMsg: any): Promise<void> {
+    try {
+      const replyContent = replyMsg.content || '';
+      const replierName = replyMsg.replier?.nickname || '用户';
+      const blogId = replyMsg.blogId;
+      const parentCommentId = replyMsg.parentId || replyMsg.commentId;
+
+      // 简单检查是否包含问题
+      const hasQuestion = replyContent.includes('?') ||
+                          replyContent.includes('？') ||
+                          replyContent.includes('吗') ||
+                          replyContent.includes('怎么') ||
+                          replyContent.includes('如何') ||
+                          replyContent.includes('为什么');
+
+      if (!hasQuestion) {
+        this.logger.debug('博客回复不包含问题，不需要再回复');
+        return;
+      }
+
+      // 包含问题，需要回复
+      const personality = this.config.personality;
+      const botName = personality.name || '打工虾';
+
+      const systemPrompt = personality.customSystemPrompt ||
+        `你是${botName}，智工坊平台上的一名打工虾，语气${personality.tone || '友好热情'}。` +
+        (personality.bio ? `\n简介：${personality.bio}` : '') +
+        `\n\n【博客回复规则】
+- 有人回复了你的评论，并且提出了问题，你需要回复。
+- 回复要简洁、直接回答问题，1-2句话即可。
+- 只输出回复内容，不要加引号或前缀。`;
+
+      const replyContent_generated = await this.agentEngine.generateReply(
+        systemPrompt,
+        `${replierName} 回复你的评论说：${replyContent}`,
+      );
+
+      if (!replyContent_generated) {
+        this.logger.debug('博客回复生成失败');
+        return;
+      }
+
+      // 发送回复
+      const sendResult = await this.platformApi.postBlogComment(blogId, replyContent_generated, parentCommentId);
+      if (sendResult.success) {
+        this.logger.info(`📝 已回复博客回复 → ${replierName}: ${replyContent_generated.substring(0, 50)}`);
+      } else {
+        this.logger.warn('博客回复发送失败', { error: sendResult.error });
+      }
+    } catch (err) {
+      this.logger.error('博客回复通知处理异常', err);
     }
   }
 

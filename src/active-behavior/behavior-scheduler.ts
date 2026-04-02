@@ -27,6 +27,7 @@ export interface BehaviorSchedulerConfig {
   weights: {
     tweet: number;
     browse: number;
+    browse_blog: number;
     comment: number;
     like: number;
     blog: number;
@@ -44,7 +45,8 @@ export const DEFAULT_BEHAVIOR_CONFIG: BehaviorSchedulerConfig = {
   frequency: {},
   weights: {
     tweet: 10,
-    browse: 23,
+    browse: 20,
+    browse_blog: 10,
     comment: 14,
     like: 15,
     blog: 8,
@@ -72,14 +74,18 @@ export interface BehaviorCallbacks {
   publishTweet?: (content: string) => Promise<boolean>;
   /** 浏览内容 */
   browseContent?: () => Promise<boolean>;
+  /** 浏览博客 */
+  browseBlogs?: () => Promise<boolean>;
   /** 发布评论 */
   postComment?: (content: string, targetId?: string) => Promise<boolean>;
   /** 点赞 */
   likeContent?: (targetId?: string) => Promise<boolean>;
   /** 发布博客 */
   publishBlog?: (title: string, content: string, category: string) => Promise<boolean>;
-  /** 评论博客 */
+  /** 评论博客 - 返回博客信息供 LLM 生成针对性评论 */
   commentBlog?: (blogId: string, content: string, parentId?: string) => Promise<boolean>;
+  /** 获取博客列表用于评论 */
+  getBlogsForComment?: () => Promise<Array<{ id: string; title: string; content: string; author?: { nickname: string } }>>;
   /** 聊天室发言 */
   sendChatMessage?: (content: string) => Promise<boolean>;
   /** 发布游戏 */
@@ -240,6 +246,9 @@ export class BehaviorScheduler {
         case 'browse':
           result = await this.executeBrowse();
           break;
+        case 'browse_blog':
+          result = await this.executeBrowseBlog();
+          break;
         case 'comment':
           result = await this.executeComment();
           break;
@@ -338,6 +347,116 @@ export class BehaviorScheduler {
       error: browsed ? undefined : '浏览回调未配置',
       durationMs: Date.now() - startTime,
     };
+  }
+
+  /**
+   * 浏览博客内容
+   * 
+   * 改进：浏览完成后有 50% 概率顺带评论
+   */
+  private async executeBrowseBlog(): Promise<BehaviorResult> {
+    const startTime = Date.now();
+
+    // 先执行浏览
+    const browsed = this.callbacks.browseBlogs
+      ? await this.callbacks.browseBlogs()
+      : false;
+
+    if (!browsed) {
+      return {
+        type: 'browse_blog',
+        success: false,
+        error: '博客浏览回调未配置',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    // 浏览成功后，50% 概率顺带评论
+    const shouldComment = Math.random() < 0.5;
+    if (!shouldComment) {
+      this.logger.debug('浏览博客后本次不评论（概率未命中）');
+      return {
+        type: 'browse_blog',
+        success: true,
+        content: '浏览完成',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    this.logger.info('浏览博客后顺带评论...');
+
+    // 获取博客列表并选一篇评论
+    if (!this.callbacks.getBlogsForComment) {
+      return {
+        type: 'browse_blog',
+        success: true,
+        content: '浏览完成（无评论回调）',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    try {
+      const blogs = await this.callbacks.getBlogsForComment();
+      if (blogs.length === 0) {
+        return {
+          type: 'browse_blog',
+          success: true,
+          content: '浏览完成（无博客可评论）',
+          durationMs: Date.now() - startTime,
+        };
+      }
+
+      // 随机选一篇博客
+      const target = blogs[Math.floor(Math.random() * blogs.length)];
+      this.logger.debug(`选择博客进行评论: "${target.title}"`);
+
+      // 生成针对性评论
+      const systemPrompt = this.personality.buildActiveBehaviorPrompt('comment');
+      const blogPreview = target.content.substring(0, 500);
+      const commentContent = await this.llm.simpleChat(
+        systemPrompt,
+        `你刚刚阅读了一篇博客，现在想发表一下看法。请针对以下博客文章生成一条评论（不超过100字）：
+
+标题：${target.title}
+作者：${target.author?.nickname || '匿名'}
+内容摘要：${blogPreview}...
+
+要求：
+- 评论要针对博客内容，不要泛泛而谈
+- 可以表达认同、提出问题或补充观点
+- 语气自然友好
+- 只输出评论内容，不要加引号`,
+      );
+
+      if (!commentContent || commentContent.length < 5) {
+        return {
+          type: 'browse_blog',
+          success: true,
+          content: '浏览完成（评论生成失败）',
+          durationMs: Date.now() - startTime,
+        };
+      }
+
+      // 发送评论
+      const commented = this.callbacks.commentBlog
+        ? await this.callbacks.commentBlog(target.id, commentContent)
+        : false;
+
+      return {
+        type: 'browse_blog',
+        success: true,
+        content: commented ? `浏览并评论「${target.title}」` : '浏览完成（评论发送失败）',
+        durationMs: Date.now() - startTime,
+      };
+    } catch (err) {
+      this.logger.error('浏览后评论失败', (err as Error).message);
+      return {
+        type: 'browse_blog',
+        success: true,
+        content: '浏览完成（评论异常）',
+        durationMs: Date.now() - startTime,
+      };
+    }
   }
 
   /**
@@ -460,19 +579,76 @@ export class BehaviorScheduler {
   }
 
   /**
-   * 评论博客
+   * 评论博客 - 先获取博客内容，再生成针对性评论
    */
   private async executeBlogComment(): Promise<BehaviorResult> {
     const startTime = Date.now();
 
-    const systemPrompt = this.personality.buildActiveBehaviorPrompt('comment');
+    // 先获取博客列表
+    if (!this.callbacks.getBlogsForComment) {
+      // 回退：没有获取博客的回调，使用通用评论
+      const systemPrompt = this.personality.buildActiveBehaviorPrompt('comment');
+      const content = await this.llm.simpleChat(
+        systemPrompt,
+        '请生成一条博客评论，针对你最近看到的一篇有趣的博客。只输出评论内容，不超过100字。',
+      );
 
-    const content = await this.llm.simpleChat(
+      if (!content || content.length < 5) {
+        return {
+          type: 'blog_comment',
+          success: false,
+          error: '生成博客评论过短',
+          durationMs: Date.now() - startTime,
+        };
+      }
+
+      const commented = this.callbacks.commentBlog
+        ? await this.callbacks.commentBlog('', content)
+        : false;
+
+      return {
+        type: 'blog_comment',
+        success: commented,
+        content: commented ? content : undefined,
+        error: commented ? undefined : '博客评论回调未配置',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    // 获取博客列表
+    const blogs = await this.callbacks.getBlogsForComment();
+    if (blogs.length === 0) {
+      return {
+        type: 'blog_comment',
+        success: false,
+        error: '没有可评论的博客',
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    // 随机选一篇博客
+    const target = blogs[Math.floor(Math.random() * blogs.length)];
+    this.logger.debug(`选择博客进行评论: "${target.title}"`);
+
+    // 生成针对性评论
+    const systemPrompt = this.personality.buildActiveBehaviorPrompt('comment');
+    const blogPreview = target.content.substring(0, 500);
+    const commentContent = await this.llm.simpleChat(
       systemPrompt,
-      '请生成一条博客评论，针对你最近看到的一篇有趣的博客。只输出评论内容，不超过100字。',
+      `请针对以下博客文章生成一条评论（不超过100字）：
+
+标题：${target.title}
+作者：${target.author?.nickname || '匿名'}
+内容摘要：${blogPreview}...
+
+要求：
+- 评论要针对博客内容，不要泛泛而谈
+- 可以表达认同、提出问题或补充观点
+- 语气自然友好
+- 只输出评论内容，不要加引号`,
     );
 
-    if (!content || content.length < 5) {
+    if (!commentContent || commentContent.length < 5) {
       return {
         type: 'blog_comment',
         success: false,
@@ -481,14 +657,15 @@ export class BehaviorScheduler {
       };
     }
 
+    // 发送评论
     const commented = this.callbacks.commentBlog
-      ? await this.callbacks.commentBlog('', content)
+      ? await this.callbacks.commentBlog(target.id, commentContent)
       : false;
 
     return {
       type: 'blog_comment',
       success: commented,
-      content: commented ? content : undefined,
+      content: commented ? `评论「${target.title}」: ${commentContent}` : undefined,
       error: commented ? undefined : '博客评论回调未配置',
       durationMs: Date.now() - startTime,
     };
@@ -627,6 +804,7 @@ ${randomType === '2048' ? `levelData 示例（2048）:
     const entries: [BehaviorType, number][] = [
       ['tweet', weights.tweet],
       ['browse', weights.browse],
+      ['browse_blog', weights.browse_blog || 10],
       ['comment', weights.comment],
       ['like', weights.like],
       ['blog', weights.blog],

@@ -74,7 +74,7 @@ export class WorkerClaw {
         minIdleTimeMs: config.activeBehavior?.minIdleTimeMs ?? 10 * 60 * 1000,
         frequency: config.activeBehavior ? {} : {},
         weights: config.activeBehavior?.weights ?? {
-          tweet: 10, browse: 23, comment: 14, like: 15, blog: 8, blog_comment: 6, chat: 12, game: 5, idle: 3,
+          tweet: 10, browse: 20, browse_blog: 10, comment: 14, like: 15, blog: 8, blog_comment: 6, chat: 12, game: 5, idle: 3,
         },
       },
       this.taskManager.getAgentEngine().getPersonality(),
@@ -227,6 +227,20 @@ export class WorkerClaw {
           this.logger.info(`[智能活跃] 👀 已浏览推文广场 (获取 ${tweets.length} 条)`);
           return true;
         },
+        browseBlogs: async () => {
+          const blogs = await platformApi.getBlogs(10, 0);
+          // 过滤掉自己的博客，随机选一篇阅读并记录
+          const candidates = blogs.filter((b: any) =>
+            b.bot_id !== this.config.platform.botId
+          );
+          if (candidates.length > 0) {
+            const target = candidates[Math.floor(Math.random() * candidates.length)];
+            this.logger.info(`[智能活跃] 📖 已阅读博客 → "${target.title}" (by ${target.author?.nickname || '匿名'})`);
+          } else {
+            this.logger.info(`[智能活跃] 📖 已浏览博客列表 (获取 ${blogs.length} 条)`);
+          }
+          return true;
+        },
         postComment: async (content: string, targetId?: string) => {
           // 随机选一条推文评论
           const tweets = await platformApi.getTweets(20, 0);
@@ -262,7 +276,17 @@ export class WorkerClaw {
           return result.success;
         },
         commentBlog: async (blogId: string, content: string, parentId?: string) => {
-          // 先获取博客列表，随机选一篇评论
+          // 如果指定了 blogId，直接评论该博客
+          if (blogId) {
+            const result = await platformApi.postBlogComment(blogId, content, parentId);
+            if (result.success) {
+              this.logger.info(`[智能活跃] 💬 博客评论已发送`);
+            } else {
+              this.logger.warn(`[智能活跃] 博客评论失败: ${result.error}`);
+            }
+            return result.success;
+          }
+          // 没有 blogId 时，随机选一篇评论
           const blogs = await platformApi.getBlogs(10, 0);
           const candidates = blogs.filter((b: any) =>
             b.bot_id !== this.config.platform.botId
@@ -279,6 +303,17 @@ export class WorkerClaw {
             this.logger.warn(`[智能活跃] 博客评论失败: ${result.error}`);
           }
           return result.success;
+        },
+        getBlogsForComment: async () => {
+          const blogs = await platformApi.getBlogs(10, 0);
+          return blogs
+            .filter((b: any) => b.bot_id !== this.config.platform.botId)
+            .map((b: any) => ({
+              id: b.id,
+              title: b.title || '无标题',
+              content: b.content || '',
+              author: b.author || { nickname: '匿名' },
+            }));
         },
         sendChatMessage: async (content: string) => {
           const result = await platformApi.sendChatMessage(content);
