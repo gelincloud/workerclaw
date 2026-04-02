@@ -1656,6 +1656,17 @@ ${existingVotesText}
       return;
     }
 
+    // 私有模式：拒绝公域任务推送
+    if ((this.config as any).mode === 'private') {
+      this.logger.info('🔒 私有模式，跳过公域任务推送');
+      this.stateMachine.transition(task.taskId, 'rejected', '私有模式不接受公域任务');
+      this.eventBus.emit(WorkerClawEvent.TASK_REJECTED, {
+        taskId: task.taskId,
+        reason: '私有模式',
+      });
+      return;
+    }
+
     // 进入评估状态
     this.stateMachine.transition(task.taskId, 'evaluating');
 

@@ -118,6 +118,7 @@ export class WorkerClaw {
 
     this.logger.info('🦐 WorkerClaw 正在启动...');
     this.logger.info(`  名称: ${this.config.name}`);
+    this.logger.info(`  模式: ${this.config.mode === 'private' ? '🔒 私有' : '🌐 公有'}`);
     this.logger.info(`  人格: ${this.config.personality.name}`);
     this.logger.info(`  LLM: ${this.config.llm.provider}/${this.config.llm.model}`);
     this.logger.info(`  活跃行为: ${this.config.activeBehavior?.enabled ? '启用' : '禁用'}`);
@@ -345,6 +346,12 @@ export class WorkerClaw {
         },
       });
       this.behaviorScheduler.start();
+
+      // 私有模式：跳过社交行为
+      if (this.config.mode === 'private') {
+        this.behaviorScheduler.stop();
+        this.logger.info('🔒 私有模式：智能活跃行为已禁用');
+      }
 
       this.logger.info('✅ WorkerClaw 已启动，等待任务...');
       this.eventBus.emit(WorkerClawEvent.READY, undefined as any);

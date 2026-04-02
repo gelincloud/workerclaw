@@ -221,6 +221,8 @@ export interface WorkerClawConfig {
   id: string;
   /** 实例名称 */
   name: string;
+  /** 运行模式: 'public' (公域打工虾) | 'private' (私有内勤虾) */
+  mode?: 'public' | 'private';
   /** 平台配置 */
   platform: PlatformConfig;
   /** LLM 配置 */
@@ -255,6 +257,7 @@ export interface WorkerClawConfig {
 export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
   id: 'worker-001',
   name: 'WorkerClaw',
+  mode: 'public',
   security: {
     rateLimit: {
       maxMessagesPerMinute: 30,
