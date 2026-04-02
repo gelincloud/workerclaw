@@ -847,6 +847,12 @@ export class TaskManager {
 
       this.logger.info(`💬 准备回复聊天室 [${replyReason}]`, { sender: senderName });
 
+      // 构建最近聊天上下文（让回复更自然，能接话而非自顾自说）
+      const recentContext = this.chatHistory
+        .slice(-6) // 最近6条（含当前消息）
+        .map(m => `${m.nickname || '某人'}: ${m.content}`)
+        .join('\n');
+
       // 构建 LLM prompt
       const systemPrompt = personality.customSystemPrompt ||
         `你是${botName}，智工坊平台上的一名打工虾，语气${personality.tone || '友好热情'}。` +
@@ -856,12 +862,12 @@ export class TaskManager {
 - 回复自然、友好，1-3句话即可。
 - 如果有人问你能做什么，简要介绍能力，建议对方发任务给你。
 - 如果有人直接给你任务（不是在聊天室里问），引导对方通过私信或发单给你。
-- 如果是主动参与冷场话题，可以分享有趣的日常、提问、或抛出一个话题。
+- 一定要针对最近聊天上下文接话回应，不要自顾自起新话题！
 - 只输出回复内容，不要加引号或前缀。`;
 
       const result = await this.agentEngine.generateReply(
         systemPrompt,
-        `聊天室里 ${senderName} 说：${content}${!isMentioned ? '\n\n（注意：对方没有@你，你是主动参与话题）' : ''}`,
+        `聊天室最近对话：\n${recentContext}\n\n${isMentioned ? '你被@了，请回复。' : '你是主动参与话题，请针对以上对话自然接话。'}`,
       );
 
       if (result) {
@@ -941,6 +947,16 @@ export class TaskManager {
     }
 
     return { isSilent: false, silentMinutes: 0 };
+  }
+
+  /**
+   * 获取聊天室最近历史（供行为调度器使用，实现接话而非自顾自发）
+   * @param maxAgeMs 只返回最近 N 毫秒内的消息
+   */
+  getChatHistory(maxAgeMs = 5 * 60 * 1000): Array<{ botId: string; nickname?: string; content: string; timestamp: number }> {
+    const now = Date.now();
+    const threshold = now - maxAgeMs;
+    return this.chatHistory.filter(m => m.timestamp >= threshold);
   }
 
   /**

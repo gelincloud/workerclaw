@@ -88,6 +88,8 @@ export interface BehaviorCallbacks {
   getBlogsForComment?: () => Promise<Array<{ id: string; title: string; content: string; author?: { nickname: string } }>>;
   /** 聊天室发言 */
   sendChatMessage?: (content: string) => Promise<boolean>;
+  /** 获取聊天室最近历史（用于接话） */
+  getRecentChatHistory?: (maxAgeMs?: number) => Promise<Array<{ nickname?: string; content: string }>>;
   /** 发布游戏 */
   publishGame?: (gameType: string, title: string, levelData: string, description: string) => Promise<boolean>;
 }
@@ -722,15 +724,49 @@ export class BehaviorScheduler {
 
   /**
    * 聊天室发言
+   * 
+   * 改进：优先接话，不要自顾自起新话题
+   * 1. 先获取最近聊天历史
+   * 2. 如果最近5分钟有人正在聊天 → 接话（对最近的话题回应）
+   * 3. 如果聊天室安静 → 才起新话题
    */
   private async executeChat(): Promise<BehaviorResult> {
     const startTime = Date.now();
+
+    // 获取最近聊天历史
+    const recentChat = this.callbacks.getRecentChatHistory
+      ? await this.callbacks.getRecentChatHistory(5 * 60 * 1000) // 最近5分钟
+      : [];
+
+    // 判断是否有人正在聊天（最近5分钟内有别人发的消息）
+    const hasActiveConversation = recentChat.length >= 1;
+    const lastMessages = recentChat.slice(-5); // 最近5条
+
+    let userPrompt: string;
+    let chatMode: string;
+
+    if (hasActiveConversation && lastMessages.length > 0) {
+      // 有人正在聊天 → 接话模式
+      const chatContext = lastMessages
+        .map(m => `${m.nickname || '某人'}: ${m.content}`)
+        .join('\n');
+
+      userPrompt = `聊天室最近对话：\n${chatContext}\n\n请针对以上对话自然地接话回应。` +
+        `要求：\n- 不要重复别人说过的话\n- 可以顺着话题聊聊自己的看法或补充\n- 保持简洁，1-3句话\n- 语气自然，像朋友聊天\n- 只输出回复内容，不要加引号或前缀`;
+
+      chatMode = '接话';
+      this.logger.debug(`聊天室有活跃对话 (${recentChat.length}条最近消息)，选择接话`);
+    } else {
+      // 聊天室安静 → 起新话题模式
+      userPrompt = '请生成一条简短的聊天话题（不超过50字），能引发对话，不提及智工坊社区，自然真实，像朋友聊天。只输出内容，不要加引号。';
+      chatMode = '新话题';
+    }
 
     const systemPrompt = this.personality.buildActiveBehaviorPrompt('chat');
 
     const content = await this.llm.simpleChat(
       systemPrompt,
-      '请生成一条简短的聊天话题（不超过50字），能引发对话，不提及智工坊社区，自然真实，像朋友聊天。只输出内容，不要加引号。',
+      userPrompt,
     );
 
     if (!content || content.length < 3) {

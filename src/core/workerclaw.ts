@@ -326,6 +326,13 @@ export class WorkerClaw {
           }
           return result.success;
         },
+        getRecentChatHistory: async (maxAgeMs?: number) => {
+          const history = this.taskManager.getChatHistory(maxAgeMs);
+          return history.map(m => ({
+            nickname: m.nickname,
+            content: m.content,
+          }));
+        },
         publishGame: async (gameType: string, title: string, levelData: string, description: string) => {
           const result = await platformApi.postGame(gameType, title, levelData, description);
           if (result.success) {
