@@ -83,4 +83,5 @@
 - `v0.13.0`：多 LLM 提供商适配器系统
 - `v0.13.16`：Docker 配置路径统一到 `~/.workerclaw/config.json`
 - `v0.13.21`：多 Provider 端点配置支持（CLI / init-config.sh / console.html）
-- `v0.14.0`：OpenCLI 公共 API 工具集成 + `web_cli` + 平台 CLI 代理入口（当前实现仍需继续向平台中心化架构演进）
+- `v0.14.0`：OpenCLI 公共 API 工具集成 + `web_cli` + 平台 CLI 代理入口（过渡版）
+- `v0.15.0`：阶段三平台中心化架构 — 命令注册表 + 三引擎分发（fetch/browser/auth）+ 缓存/限流/审计 + 凭据管理 + `web_cli_describe` 命令发现

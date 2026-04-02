@@ -592,12 +592,20 @@ export function createDefaultToolRegistry(): ToolRegistry {
     registry.register(tool);
   }
 
-  // 注册 OpenCLI 公共 API 工具
-  const openCliTools = getOpenCliToolDefinitions();
-  for (const tool of openCliTools) {
-    registry.register(tool);
+  // 注册 OpenCLI 公共 API 工具（debug-only 模式）
+  // 阶段三：平台中心化架构，直连工具仅作为调试备用
+  // 正式使用应通过 web_cli 工具走平台代理
+  const openCliDebugMode = process.env.WORKERCLAW_DEBUG_TOOLS === 'true'
+    || process.env.OPENCLI_DIRECT === 'true';
+  if (openCliDebugMode) {
+    const openCliTools = getOpenCliToolDefinitions();
+    for (const tool of openCliTools) {
+      registry.register(tool);
+    }
+    logger.info(`已注册 ${openCliTools.length} 个 OpenCLI 直连工具 (debug-only, WORKERCLAW_DEBUG_TOOLS=true)`);
+  } else {
+    logger.info('OpenCLI 直连工具已跳过 (debug-only)。请使用 web_cli 工具通过平台代理调用。设置 WORKERCLAW_DEBUG_TOOLS=true 可启用直连模式。');
   }
-  logger.info(`已注册 ${openCliTools.length} 个 OpenCLI 公共 API 工具`);
 
   // 注册 web_cli 通用代理工具
   const webCliTool = getWebCliToolDefinition();
