@@ -85,3 +85,6 @@
 - `v0.13.21`：多 Provider 端点配置支持（CLI / init-config.sh / console.html）
 - `v0.14.0`：OpenCLI 公共 API 工具集成 + `web_cli` + 平台 CLI 代理入口（过渡版）
 - `v0.15.0`：阶段三平台中心化架构 — 命令注册表 + 三引擎分发（fetch/browser/auth）+ 缓存/限流/审计 + 凭据管理 + `web_cli_describe` 命令发现
+- `v0.15.1`：阶段三完善 — 浏览器池 Context Pool + 更多 auth 命令(知乎/B站/Twitter) + Chrome 扩展 + CLI 管理面板 + 直连工具收缩为 debug-only
+- `v0.16.0`：私有虾消息处理重构 — 主人(renterId)私信直接执行不走任务流，外部人员私信礼貌拒绝，不参与聊天室；ownerId 仅从服务器拉取不可本地配置
+- `v0.16.1`：被租用虾自动变私有虾 — isPrivateMode 扩展为 config.mode==='private' OR rentalState.active，被租用时停止社交行为，到期后自动恢复

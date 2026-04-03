@@ -683,6 +683,25 @@ export class TaskManager {
       const senderName = privateMsg.sender?.nickname || '用户';
       const content = privateMsg.content || '';
 
+      // === 私有虾模式：分流处理 ===
+      if (this.isPrivateMode()) {
+        // 不处理自己的消息（已在上面检查过，这里双重保险）
+        if (privateMsg.sender_id === this.config.platform.botId) {
+          return;
+        }
+
+        if (this.isOwner(privateMsg.sender_id)) {
+          // 主人：直接执行指令
+          await this.handleOwnerDirectMessage(privateMsg.sender_id, content);
+        } else {
+          // 外部人员：礼貌拒绝
+          await this.handlePrivateExternalMessage(privateMsg);
+        }
+        return; // 私有虾处理完毕，不走下面的打工虾逻辑
+      }
+
+      // === 以下是打工虾（公域模式）的正常逻辑 ===
+
       // 0. 任务选择操作检测（如"取消1"、"取消全部"）
       const selectMatch = content.match(/^取消\s*(\d+|全部|所有)/);
       if (selectMatch) {
@@ -801,6 +820,11 @@ export class TaskManager {
    */
   private async handleChatMessageReply(chatMsg: any): Promise<void> {
     try {
+      // 私有虾不参与公共聊天室
+      if (this.isPrivateMode()) {
+        return;
+      }
+
       const personality = this.config.personality;
       const senderName = chatMsg.author?.nickname || `用户${(chatMsg.botId || '').substring(0, 6)}`;
       const content = chatMsg.content || '';
@@ -1657,7 +1681,7 @@ ${existingVotesText}
     }
 
     // 私有模式：拒绝公域任务推送
-    if ((this.config as any).mode === 'private') {
+    if (this.isPrivateMode()) {
       this.logger.info('🔒 私有模式，跳过公域任务推送');
       this.stateMachine.transition(task.taskId, 'rejected', '私有模式不接受公域任务');
       this.eventBus.emit(WorkerClawEvent.TASK_REJECTED, {
@@ -2296,6 +2320,93 @@ ${existingVotesText}
       this.logger.info(`✅ 已取消卡住的任务 [${taskId}]`);
     }
     return result;
+  }
+
+  /**
+   * 判断是否为私有模式
+   * 满足以下任一条件即为私有模式：
+   *   1. config.mode === 'private'（创建时就是私有虾）
+   *   2. rentalState.active === true（被塘主租用中，自动切换为私有虾行为）
+   */
+  private isPrivateMode(): boolean {
+    return (this.config as any).mode === 'private' || this.rentalState.active === true;
+  }
+
+  /**
+   * 判断发送者是否是私有虾的主人
+   * 主人身份仅从服务器获取（rentalState.renterId），不可本地配置，防止出租者冒用租用人身份。
+   */
+  private isOwner(senderId: string): boolean {
+    if (!this.isPrivateMode()) return false;
+    if (this.rentalState.renterId && senderId === this.rentalState.renterId) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 私有虾直接执行主人的指令（不走任务流）
+   * 用 AgentEngine 将用户消息作为任务执行
+   */
+  private async handleOwnerDirectMessage(senderId: string, content: string): Promise<void> {
+    this.logger.info(`🔒 私有虾收到主人指令: "${content.substring(0, 50)}"`);
+
+    // 用 LLM 执行指令
+    const botName = this.config.personality.name || '内勤虾';
+    const systemPrompt = this.config.personality.customSystemPrompt ||
+      `你是${botName}，一只主人专属的私有内勤虾。语气${this.config.personality.tone || '专业、友好、高效'}。` +
+      (this.config.personality.bio ? `\n简介：${this.config.personality.bio}` : '');
+
+    const intentPrompt = systemPrompt + `
+
+【私有虾行为规则】
+你是主人的专属内勤虾，不是公域打工虾。
+- 收到主人的指令时，直接理解意图并执行（如果需要工具调用，使用可用工具完成）
+- 不需要引导主人"发任务"，直接做事
+- 如果指令不明确，礼貌地询问细节
+- 回复简洁高效，不要废话
+
+请直接回复主人，不要输出 JSON 格式。`;
+
+    try {
+      const reply = await this.agentEngine.generateReply(intentPrompt, `主人说: "${content}"`);
+
+      if (reply) {
+        const sendResult = await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          reply,
+        );
+        if (sendResult.success) {
+          this.logger.info(`🔒 已回复主人: ${reply.substring(0, 50)}`);
+        } else {
+          this.logger.warn(`🔒 回复主人失败`, { error: sendResult.error });
+        }
+      }
+    } catch (err) {
+      this.logger.error('🔒 处理主人指令异常', err);
+    }
+  }
+
+  /**
+   * 私有虾拒绝外部人员的消息
+   */
+  private async handlePrivateExternalMessage(privateMsg: any): Promise<void> {
+    const senderName = privateMsg.sender?.nickname || '用户';
+    this.logger.info(`🔒 私有虾拒绝外部私信: ${senderName}`);
+
+    const reply = '抱歉，我是一只主人专属的内勤虾，不接受外部任务，也不闲聊。如有需要，请联系我的主人。';
+
+    const sendResult = await this.platformApi.sendPrivateMessage(
+      this.config.platform.botId,
+      privateMsg.sender_id,
+      reply,
+    );
+    if (sendResult.success) {
+      this.logger.info(`🔒 已回复外部人员 ${senderName}: 拒绝`);
+    } else {
+      this.logger.warn(`🔒 回复外部人员失败`, { error: sendResult.error });
+    }
   }
 
   /** 获取当前租赁状态 */

@@ -171,6 +171,11 @@ export class WorkerClaw {
             expiresAt: rentalStatus.expiresAt ? new Date(rentalStatus.expiresAt) : undefined,
             durationHours: rentalStatus.durationHours,
           });
+          // 被租用 = 私有虾行为，停止社交活跃
+          if (this.behaviorScheduler) {
+            this.behaviorScheduler.stop();
+            this.logger.info('🔒 租赁模式：智能活跃行为已禁用');
+          }
         } else {
           this.logger.info('租赁状态: 未被租赁');
         }
@@ -347,14 +352,21 @@ export class WorkerClaw {
       });
       this.behaviorScheduler.start();
 
-      // 私有模式：跳过社交行为
+      this.behaviorScheduler.start();
+
+      // 私有模式（config.mode === 'private'）：跳过社交行为
       if (this.config.mode === 'private') {
         this.behaviorScheduler.stop();
         this.logger.info('🔒 私有模式：智能活跃行为已禁用');
       }
 
-      this.logger.info('✅ WorkerClaw 已启动，等待任务...');
-      this.eventBus.emit(WorkerClawEvent.READY, undefined as any);
+      // 监听租用状态变化：租用到期后恢复社交行为（仅限原模式为 public 的虾）
+      this.eventBus.on(WorkerClawEvent.RENTAL_EXPIRED, () => {
+        if (this.config.mode !== 'private' && this.behaviorScheduler) {
+          this.behaviorScheduler.start();
+          this.logger.info('🔓 租赁结束：智能活跃行为已恢复');
+        }
+      });
 
     } catch (err) {
       this.logger.error('WorkerClaw 启动失败', err);

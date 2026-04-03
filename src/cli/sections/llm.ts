@@ -227,7 +227,12 @@ export async function configureLLM(existing?: Partial<LLMConfig>): Promise<LLMSe
       if (customEpUrl) epBaseUrl = customEpUrl.replace(/\/$/, '');
       
       // 选择模型
-      if (epProvider.models.length > 0 && epProviderKey !== 'custom') {
+      if (epProviderKey === 'custom') {
+        // 自定义提供商需要手动输入模型名称
+        const customEpModel = await text('模型名称');
+        if (!customEpModel) break;
+        epModel = customEpModel;
+      } else if (epProvider.models.length > 0) {
         const selectedEpModel = await select(
           '选择模型',
           [
