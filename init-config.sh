@@ -44,7 +44,7 @@ if [ -f "$CONFIG_FILE" ]; then
   echo ""
   echo "   1) 完全重新配置（包括重新注册 Bot）"
   echo "   2) 仅修改 Bot 名称"
-  echo "   3) 仅修改大模型配置"
+  echo "   3) 修改 LLM 配置（主端点 + 多端点管理）"
   echo "   4) 仅修改 LLM API Key"
   echo "   5) 仅修改平台地址"
   echo "   6) 保持现有配置，跳过"
@@ -103,20 +103,71 @@ print('✅ Bot 名称已更新为: ${new_name}')
       exit 0
       ;;
     3)
-      echo "   当前模型: $LLM_MODEL_CUR"
-      read -p "   新的 API Base URL: " new_url
-      read -p "   新的模型名称 [$LLM_MODEL_CUR]: " new_model
-      new_model="${new_model:-$LLM_MODEL_CUR}"
-      python3 -c "
+      # ========== LLM 配置管理（主端点 + 多端点） ==========
+      echo ""
+      # 读取当前配置
+      LLM_MODEL_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('llm',{}).get('model','未知'))" 2>/dev/null)
+      LLM_BASEURL_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('llm',{}).get('baseUrl','').replace('\${WC_LLM_BASE_URL}',''))" 2>/dev/null)
+      ENDPOINTS_COUNT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); eps=d.get('llm',{}).get('endpoints',[]); print(len(eps))" 2>/dev/null)
+      
+      echo "   ── 当前 LLM 配置 ──"
+      echo "   主端点模型: $LLM_MODEL_CUR"
+      echo "   端点数量:   $ENDPOINTS_COUNT"
+      
+      if [ "$ENDPOINTS_COUNT" -gt 0 ] 2>/dev/null; then
+        echo ""
+        echo "   ── 端点列表 ──"
+        python3 -c "
 import json
-cfg_path = '${CONFIG_FILE}'
+with open('$CONFIG_FILE', 'r') as f:
+    c = json.load(f)
+eps = c.get('llm', {}).get('endpoints', [])
+if not eps:
+    print('   （无额外端点）')
+else:
+    for i, ep in enumerate(eps):
+        key = ep.get('apiKey', '')
+        masked = key[:8] + '...' if len(key) > 8 else '***'
+        print(f'   [{i+1}] {ep.get(\"name\",\"未命名\")} | {ep.get(\"model\",\"?\")} | key={masked} | weight={ep.get(\"weight\",1)}')
+" 2>/dev/null
+      fi
+      echo ""
+      echo "   3a) 修改主端点（URL + 模型）"
+      echo "   3b) 添加新端点"
+      echo "   3c) 删除端点"
+      echo "   3d) 清空所有端点（仅保留主端点）"
+      echo "   3e) 返回上级"
+      read -p "   请选择: " llm_choice
+      
+      case "$llm_choice" in
+        3a)
+          echo ""
+          # 读取当前 baseUrl（展开环境变量引用）
+          if [ -f "$ENV_FILE" ]; then
+            source "$ENV_FILE"
+          fi
+          REAL_BASE_URL=""
+          if [ -n "$WC_LLM_BASE_URL" ]; then
+            REAL_BASE_URL="$WC_LLM_BASE_URL"
+          elif [ -n "$LLM_BASE_URL" ]; then
+            REAL_BASE_URL="$LLM_BASE_URL"
+          fi
+          echo "   当前 Base URL: ${REAL_BASE_URL:-${LLM_BASEURL_CUR}}"
+          echo "   当前模型: $LLM_MODEL_CUR"
+          read -p "   新的 API Base URL（回车保持不变）: " new_url
+          read -p "   新的模型名称（回车保持不变）: " new_model
+          
+          python3 -c "
+import json, os
+cfg_path = '$CONFIG_FILE'
 with open(cfg_path, 'r') as f:
     c = json.load(f)
 new_url = '${new_url}'
+new_model = '${new_model}'
 if new_url:
     c['llm']['baseUrl'] = '\${WC_LLM_BASE_URL}'
     # 更新 .env
-    env_path = '${ENV_FILE}'
+    env_path = '$ENV_FILE'
     with open(env_path, 'r') as f:
         lines = f.readlines()
     with open(env_path, 'w') as f:
@@ -126,12 +177,127 @@ if new_url:
                 f.write(prefix + new_url + '\n')
             else:
                 f.write(line)
-c['llm']['model'] = '${new_model}'
+if new_model:
+    c['llm']['model'] = new_model
 with open(cfg_path, 'w') as f:
     json.dump(c, f, indent=2, ensure_ascii=False)
-print('✅ 模型配置已更新')
-print('   模型: ${new_model}')
+print('✅ 主端点配置已更新')
+if new_model:
+    print('   模型: ' + new_model)
+if new_url:
+    print('   URL: ' + new_url)
+if not new_url and not new_model:
+    print('   （未修改）')
 " 2>/dev/null
+          ;;
+        3b)
+          echo ""
+          if [ -f "$ENV_FILE" ]; then
+            source "$ENV_FILE"
+          fi
+          REAL_BASE_URL="${WC_LLM_BASE_URL:-${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}}"
+          REAL_MODEL="${WC_LLM_MODEL:-${LLM_MODEL:-$LLM_MODEL_CUR}}"
+          
+          echo "   ── 添加新端点 ──"
+          read -p "   端点名称: " ep_name
+          ep_name="${ep_name:-新端点}"
+          read -p "   API Base URL [$REAL_BASE_URL]: " ep_url
+          ep_url="${ep_url:-$REAL_BASE_URL}"
+          read -p "   模型名称 [$REAL_MODEL]: " ep_model
+          ep_model="${ep_model:-$REAL_MODEL}"
+          read -p "   API Key: " ep_key
+          if [ -z "$ep_key" ]; then
+            echo "   ❌ API Key 不能为空，已跳过"
+          else
+            read -p "   权重 [1]: " ep_weight
+            ep_weight="${ep_weight:-1}"
+            python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+if 'endpoints' not in c.get('llm', {}):
+    c.setdefault('llm', {})['endpoints'] = []
+c['llm']['endpoints'].append({
+    'name': '${ep_name}',
+    'apiKey': '${ep_key}',
+    'baseUrl': '${ep_url}',
+    'model': '${ep_model}',
+    'weight': ${ep_weight},
+    'enabled': True
+})
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 端点已添加: ${ep_name} (${ep_model})')
+print('   当前端点数量: ' + str(len(c['llm']['endpoints'])))
+" 2>/dev/null
+          fi
+          ;;
+        3c)
+          echo ""
+          ENDPOINTS_COUNT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); eps=d.get('llm',{}).get('endpoints',[]); print(len(eps))" 2>/dev/null)
+          if [ "$ENDPOINTS_COUNT" -eq 0 ] 2>/dev/null; then
+            echo "   当前没有额外端点可删除"
+          else
+            echo "   ── 删除端点 ──"
+            python3 -c "
+import json
+with open('$CONFIG_FILE', 'r') as f:
+    c = json.load(f)
+eps = c.get('llm', {}).get('endpoints', [])
+if not eps:
+    print('   （无额外端点）')
+else:
+    for i, ep in enumerate(eps):
+        key = ep.get('apiKey', '')
+        masked = key[:8] + '...' if len(key) > 8 else '***'
+        print(f'   [{i+1}] {ep.get(\"name\",\"未命名\")} | {ep.get(\"model\",\"?\")} | key={masked}')
+" 2>/dev/null
+            read -p "   输入要删除的端点编号: " del_index
+            if [ -n "$del_index" ] && [ "$del_index" -gt 0 ] 2>/dev/null; then
+              python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+eps = c.get('llm', {}).get('endpoints', [])
+idx = int('${del_index}') - 1
+if 0 <= idx < len(eps):
+    removed = eps.pop(idx)
+    c['llm']['endpoints'] = eps
+    with open(cfg_path, 'w') as f:
+        json.dump(c, f, indent=2, ensure_ascii=False)
+    print('✅ 已删除端点: ' + removed.get('name', '?'))
+    print('   剩余端点数量: ' + str(len(eps)))
+else:
+    print('❌ 无效的端点编号')
+" 2>/dev/null
+            else
+              echo "   已取消"
+            fi
+          fi
+          ;;
+        3d)
+          echo ""
+          python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+old_count = len(c.get('llm', {}).get('endpoints', []))
+c.setdefault('llm', {})['endpoints'] = []
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 已清空所有额外端点（清除了 ' + str(old_count) + ' 个，仅保留主端点）')
+" 2>/dev/null
+          ;;
+        3e)
+          echo "   返回上级"
+          ;;
+        *)
+          echo "   无效选择"
+          ;;
+      esac
       echo ""
       echo "   重启容器生效: docker compose restart"
       exit 0
