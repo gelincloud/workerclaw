@@ -92,6 +92,10 @@ export class ContextWindow {
   /**
    * 裁剪消息列表以适应上下文窗口
    * 始终保留系统消息和最近 N 条消息
+   *
+   * 重要：assistant(tool_calls) 与 tool 消息必须成对出现，
+   * 否则 GLM 等模型会报 400 "messages 参数非法"。
+   * 因此裁剪时必须保证消息对的完整性。
    */
   fitToWindow(messages: LLMMessage[]): {
     messages: LLMMessage[];
@@ -139,6 +143,11 @@ export class ContextWindow {
       }
     }
 
+    // 关键：修复因裁剪导致的消息对断裂
+    // 确保 assistant(tool_calls) 后面紧跟对应的 tool 消息，
+    // 且 tool 消息前面有对应的 assistant 消息
+    resultMessages = this.repairMessagePairs(resultMessages);
+
     const finalMessages = [...systemMessages, ...resultMessages];
     const conversationTokens = this.estimateTotalTokens(resultMessages);
 
@@ -160,6 +169,84 @@ export class ContextWindow {
         isTruncated,
       },
     };
+  }
+
+  /**
+   * 修复消息对断裂问题
+   *
+   * OpenAI/GLM 等模型要求：
+   * 1. tool 消息必须紧跟在 assistant(tool_calls) 之后
+   * 2. 孤立的 tool 消息（前面没有 assistant）会导致 400 错误
+   * 3. assistant(tool_calls) 后面缺少 tool 回复也可能导致问题
+   *
+   * 策略：
+   * - 删除孤立的 tool 消息（前面没有对应 assistant 的）
+   * - 删除尾部断裂的 assistant(tool_calls)（后面缺少 tool 回复的）
+   * - 添加占位的 tool 回复给断裂的 assistant(tool_calls)
+   */
+  private repairMessagePairs(messages: LLMMessage[]): LLMMessage[] {
+    if (messages.length === 0) return messages;
+
+    const repaired: LLMMessage[] = [];
+    const pendingToolCalls = new Map<string, { index: number; callId: string; name: string }>();
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+
+      if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+        // 记录此 assistant 的 tool_calls
+        repaired.push(msg);
+        for (const tc of msg.tool_calls) {
+          pendingToolCalls.set(tc.id, { index: repaired.length - 1, callId: tc.id, name: tc.name });
+        }
+      } else if (msg.role === 'tool') {
+        const toolCallId = msg.tool_call_id;
+        if (toolCallId && pendingToolCalls.has(toolCallId)) {
+          // 有对应的 assistant，保留
+          repaired.push(msg);
+          pendingToolCalls.delete(toolCallId);
+        } else {
+          // 孤立的 tool 消息（前面没有对应的 assistant），丢弃
+          this.logger.debug('丢弃孤立的 tool 消息', {
+            toolCallId: toolCallId || 'unknown',
+            toolName: msg.name,
+          });
+        }
+      } else {
+        // 普通消息
+        // 如果有未回复的 tool_calls，先补占位回复
+        if (pendingToolCalls.size > 0) {
+          for (const [callId, info] of pendingToolCalls) {
+            repaired.push({
+              role: 'tool',
+              content: '[上下文裁剪：此工具调用的结果已被省略]',
+              tool_call_id: callId,
+              name: info.name,
+            });
+          }
+          pendingToolCalls.clear();
+        }
+        repaired.push(msg);
+      }
+    }
+
+    // 尾部：如果有未回复的 tool_calls，补占位回复
+    if (pendingToolCalls.size > 0) {
+      for (const [callId, info] of pendingToolCalls) {
+        repaired.push({
+          role: 'tool',
+          content: '[上下文裁剪：此工具调用的结果已被省略]',
+          tool_call_id: callId,
+          name: info.name,
+        });
+      }
+      pendingToolCalls.clear();
+    }
+
+    // 清理尾部：移除连续的 tool 消息后面的 assistant 消息如果又跟了 tool 消息（冗余）
+    // 这个场景很少见，但防止意外
+
+    return repaired;
   }
 
   /**
