@@ -364,8 +364,19 @@ export class OpenAICompatibleAdapter implements LLMProviderAdapter {
   formatMessage(msg: LLMMessage): any {
     const formatted: any = {
       role: msg.role,
-      content: msg.content,
     };
+    
+    // GLM 等模型要求：assistant 消息带 tool_calls 时，content 不能是空字符串
+    // 否则 GLM 会报 1214 "messages 参数非法"
+    // 正确做法：有 tool_calls 时 content 应为 null 或不设置
+    if (msg.content !== undefined && msg.content !== null && msg.content !== '') {
+      formatted.content = msg.content;
+    } else if (msg.tool_calls) {
+      // assistant 带 tool_calls 时，content 设为 null
+      formatted.content = null;
+    } else {
+      formatted.content = msg.content || null;
+    }
     
     if (msg.name) {
       formatted.name = msg.name;

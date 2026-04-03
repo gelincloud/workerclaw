@@ -128,6 +128,18 @@ export class LLMClient {
         attempt: `${attempt}/${this.config.retry.maxRetries}`,
       });
 
+      // 调试：打印每条消息的 role + 内容摘要，便于排查 1214 错误
+      if (attempt === 1) {
+        const msgSummary = messages.map((m, i) => {
+          const contentStr = typeof m.content === 'string' ? m.content.substring(0, 60) : JSON.stringify(m.content).substring(0, 60);
+          return `${i}: ${m.role}` +
+            (m.tool_calls ? `[tool_calls: ${m.tool_calls.map(tc => tc.name).join(',')}]` : '') +
+            (m.tool_call_id ? `[tool_call_id: ${m.tool_call_id}]` : '') +
+            ` content="${contentStr}"`;
+        });
+        this.logger.debug('LLM 消息结构', { messages: msgSummary });
+      }
+
       try {
         const result = await this.adapter.sendRequest(body, currentConfig, this.logger);
         
