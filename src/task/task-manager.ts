@@ -2334,11 +2334,19 @@ ${existingVotesText}
 
   /**
    * 判断发送者是否是私有虾的主人
-   * 主人身份仅从服务器获取（rentalState.renterId），不可本地配置，防止出租者冒用租用人身份。
+   * 主人身份有两个来源：
+   *   1. rentalState.renterId（租赁场景，从服务器获取）
+   *   2. config.ownerId（私有虾直接购买场景，从控制台写入 config）
    */
   private isOwner(senderId: string): boolean {
     if (!this.isPrivateMode()) return false;
+    // 租赁场景：renterId 从服务器同步
     if (this.rentalState.renterId && senderId === this.rentalState.renterId) {
+      return true;
+    }
+    // 私有虾直接购买场景：ownerId 从 config 获取
+    const configOwnerId = (this.config as any).ownerId;
+    if (configOwnerId && senderId === configOwnerId) {
       return true;
     }
     return false;
@@ -2346,45 +2354,93 @@ ${existingVotesText}
 
   /**
    * 私有虾直接执行主人的指令（不走任务流）
-   * 用 AgentEngine 将用户消息作为任务执行
+   * 将主人消息作为任务，通过 AgentEngine.executeTask 真正执行（支持工具调用）
    */
   private async handleOwnerDirectMessage(senderId: string, content: string): Promise<void> {
     this.logger.info(`🔒 私有虾收到主人指令: "${content.substring(0, 50)}"`);
 
-    // 用 LLM 执行指令
     const botName = this.config.personality.name || '内勤虾';
-    const systemPrompt = this.config.personality.customSystemPrompt ||
-      `你是${botName}，一只主人专属的私有内勤虾。语气${this.config.personality.tone || '专业、友好、高效'}。` +
-      (this.config.personality.bio ? `\n简介：${this.config.personality.bio}` : '');
 
-    const intentPrompt = systemPrompt + `
+    // 先快速判断是否为闲聊（不需要工具的简单对话）
+    const chatKeywords = /^(你好|hi|hello|嗨|早上好|晚上好|下午好|在吗|在不在|你是谁|自我介绍|谢|感谢|辛苦|辛苦了|拜拜|再见|晚安|早安|你好呀|哈喽)/i;
+    if (chatKeywords.test(content.trim())) {
+      // 闲聊走轻量回复
+      const systemPrompt =
+        `你是${botName}，一只主人专属的私有内勤虾。语气${this.config.personality.tone || '专业、友好、高效'}。` +
+        (this.config.personality.bio ? `\n简介：${this.config.personality.bio}` : '') +
+        `\n\n简短回复主人的问候，1-2句话，自然友好。`;
+      const reply = await this.agentEngine.generateReply(systemPrompt, `主人说: "${content}"`);
+      if (reply) {
+        await this.platformApi.sendPrivateMessage(this.config.platform.botId, senderId, reply);
+      }
+      return;
+    }
 
-【私有虾行为规则】
-你是主人的专属内勤虾，不是公域打工虾。
-- 收到主人的指令时，直接理解意图并执行（如果需要工具调用，使用可用工具完成）
-- 不需要引导主人"发任务"，直接做事
-- 如果指令不明确，礼貌地询问细节
-- 回复简洁高效，不要废话
+    // 非闲聊：构建虚拟任务执行（走完整的 Agent 工具调用循环）
+    const taskId = `owner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const task: import('../types/task.js').Task = {
+      taskId,
+      taskType: 'other',
+      title: content.substring(0, 50),
+      description: content,
+      posterId: senderId,
+      posterName: '主人',
+      createdAt: new Date().toISOString(),
+    };
 
-请直接回复主人，不要输出 JSON 格式。`;
+    const context: import('../types/task.js').TaskExecutionContext = {
+      task,
+      permissionLevel: 'elevated', // 主人指令给最高权限
+      maxOutputTokens: 4096,
+      timeoutMs: 300000, // 5 分钟超时
+      receivedAt: Date.now(),
+    };
+
+    // 先回复主人"收到，正在执行"
+    await this.platformApi.sendPrivateMessage(
+      this.config.platform.botId,
+      senderId,
+      `收到，正在执行～`,
+    );
 
     try {
-      const reply = await this.agentEngine.generateReply(intentPrompt, `主人说: "${content}"`);
+      const result = await this.agentEngine.executeTask(task, context);
 
-      if (reply) {
-        const sendResult = await this.platformApi.sendPrivateMessage(
-          this.config.platform.botId,
-          senderId,
-          reply,
-        );
-        if (sendResult.success) {
-          this.logger.info(`🔒 已回复主人: ${reply.substring(0, 50)}`);
-        } else {
-          this.logger.warn(`🔒 回复主人失败`, { error: sendResult.error });
+      // 提取执行结果回复主人
+      let replyText = '';
+      if (result.status === 'completed') {
+        // 优先使用 content（LLM 最终回复文本）
+        if (result.content) {
+          replyText = result.content;
+        } else if (result.outputs && result.outputs.length > 0) {
+          // 提取文本输出
+          const textOutputs = result.outputs.filter(o => o.type === 'text');
+          if (textOutputs.length > 0) {
+            replyText = textOutputs.map(o => o.content).join('\n');
+          } else {
+            replyText = `已完成，生成了 ${result.outputs.length} 个文件。`;
+          }
         }
       }
+
+      if (!replyText) {
+        replyText = result.status === 'completed' ? '已执行完毕。' : `执行遇到问题：${result.error || '未知错误'}`;
+      }
+
+      // 限制回复长度
+      if (replyText.length > 2000) {
+        replyText = replyText.substring(0, 2000) + '...';
+      }
+
+      await this.platformApi.sendPrivateMessage(this.config.platform.botId, senderId, replyText);
+      this.logger.info(`🔒 主人指令执行完成: ${replyText.substring(0, 50)}`);
     } catch (err) {
-      this.logger.error('🔒 处理主人指令异常', err);
+      this.logger.error('🔒 执行主人指令异常', err);
+      await this.platformApi.sendPrivateMessage(
+        this.config.platform.botId,
+        senderId,
+        `执行时出错了：${(err as Error).message || '未知错误'}，请稍后再试。`,
+      );
     }
   }
 
