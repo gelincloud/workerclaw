@@ -548,7 +548,54 @@ export class AgentEngine {
       result += '\n\n' + fileGuidance;
     }
 
+    // 附加微博 PR 引导（当任务涉及微博推广时，建议结合热搜话题）
+    const weiboPrGuidance = this.buildWeiboPrGuidance(task);
+    if (weiboPrGuidance) {
+      result += '\n\n' + weiboPrGuidance;
+    }
+
     return result;
+  }
+
+  /**
+   * 微博 PR 推广引导
+   * 当任务涉及微博推广/发微博/营销时，自动建议结合热搜话题生成更自然的文案。
+   * 通过 weibo_hot_search 工具或 web_cli 获取实时热搜数据。
+   */
+  private buildWeiboPrGuidance(task: Task): string | null {
+    const desc = `${task.title || ''} ${task.description || ''}`;
+    const prKeywords = [
+      '微博.*推广', '微博.*营销', '微博.*宣传', '微博.*PR', '微博.*发',
+      '发.*微博', '推广.*微博', '微博.*话题', '蹭.*热点', '蹭.*热搜',
+      'weibo.*pr', 'weibo.*promo', 'social.*media.*marketing',
+      '社媒.*推广', '社交媒体.*推广',
+    ];
+
+    if (!prKeywords.some(kw => new RegExp(kw, 'i').test(desc))) {
+      return null;
+    }
+
+    return [
+      '## 🔥 微博推广技巧 — 结合热搜话题',
+      '此任务涉及微博推广，请参考以下策略生成更自然、更有传播力的文案：',
+      '',
+      '**操作步骤：**',
+      '1. 先调用 `weibo_hot_search` 工具获取当前微博热搜榜（实时数据）',
+      '2. 分析热搜话题，找到与推广内容自然结合的热点',
+      '3. 将推广信息融入热门话题，使文案看起来更像自然分享而非硬广',
+      '',
+      '**文案技巧：**',
+      '- 不要直接发广告，先聊聊热点话题，自然过渡到推广内容',
+      '- 适当使用热门话题标签（#话题名#）增加曝光',
+      '- 结合个人感受/观点，避免官方口吻',
+      '- 控制推广内容占比在30%以内，保持内容价值感',
+      '- 可适当 @ 相关账号增加互动感',
+      '',
+      '**互动增强：**',
+      '- 发布后可使用 web_cli 工具调用 weibo/retweet 转发相关话题微博并评论',
+      '- 使用 weibo/comment 在热门微博下评论（自然提及推广内容）',
+      '- 使用 weibo/like 点赞相关微博增加曝光',
+    ].join('\n');
   }
 
   /**

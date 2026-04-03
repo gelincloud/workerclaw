@@ -23,6 +23,7 @@ import type { PlatformConfig, LLMConfig, SecurityConfig, TaskConfig } from '../c
 import type { PriceRange } from '../core/config.js';
 import type { PermissionLevel } from '../types/agent.js';
 import type { ExperienceManager } from '../experience/index.js';
+import type { RecurringTaskScheduler } from '../scheduler/recurring-task-scheduler.js';
 
 export interface TaskManagerConfig {
   platform: PlatformConfig;
@@ -43,6 +44,10 @@ export interface TaskManagerConfig {
       formality: number;
     };
   };
+  /** 运行模式: 'public' | 'private' */
+  mode?: 'public' | 'private';
+  /** 私有虾主人的 botId（从 config 或服务器获取） */
+  ownerId?: string;
 }
 
 /** 租赁状态 */
@@ -70,6 +75,9 @@ export class TaskManager {
 
   /** 经验管理器（由外部注入） */
   private experienceManager: ExperienceManager | null = null;
+
+  /** 定时任务调度器（由外部注入，私有虾模式） */
+  private recurringTaskScheduler: RecurringTaskScheduler | null = null;
 
   // 消息去重（type + senderId + contentHash → 时间戳）
   private recentMessageKeys = new Map<string, number>();
@@ -2247,6 +2255,13 @@ ${existingVotesText}
     this.agentEngine.setExperienceManager(em);
   }
 
+  /**
+   * 设置定时任务调度器（私有虾模式）
+   */
+  setRecurringTaskScheduler(scheduler: RecurringTaskScheduler): void {
+    this.recurringTaskScheduler = scheduler;
+  }
+
   /** 注入 WebSocket 客户端（用于发送聊天室消息等） */
   setWsClient(wsClient: any): void {
     this.platformApi.setWsClient(wsClient);
@@ -2329,7 +2344,7 @@ ${existingVotesText}
    *   2. rentalState.active === true（被塘主租用中，自动切换为私有虾行为）
    */
   private isPrivateMode(): boolean {
-    return (this.config as any).mode === 'private' || this.rentalState.active === true;
+    return this.config.mode === 'private' || this.rentalState.active === true;
   }
 
   /**
@@ -2344,8 +2359,8 @@ ${existingVotesText}
     if (this.rentalState.renterId && senderId === this.rentalState.renterId) {
       return true;
     }
-    // 私有虾直接购买场景：ownerId 从 config 获取
-    const configOwnerId = (this.config as any).ownerId;
+        // 私有虾直接购买场景：ownerId 从 config 获取
+        const configOwnerId = this.config.ownerId;
     if (configOwnerId && senderId === configOwnerId) {
       return true;
     }
@@ -2373,6 +2388,13 @@ ${existingVotesText}
       if (reply) {
         await this.platformApi.sendPrivateMessage(this.config.platform.botId, senderId, reply);
       }
+      return;
+    }
+
+    // 定时任务指令检测
+    const schedulerCmd = this.parseSchedulerCommand(content);
+    if (schedulerCmd) {
+      await this.handleSchedulerCommand(senderId, schedulerCmd);
       return;
     }
 
@@ -2440,6 +2462,376 @@ ${existingVotesText}
         this.config.platform.botId,
         senderId,
         `执行时出错了：${(err as Error).message || '未知错误'}，请稍后再试。`,
+      );
+    }
+  }
+
+  /**
+   * 解析定时任务指令
+   * 支持的指令格式：
+   * - "定时任务" / "定时列表" / "查看定时" — 查看所有定时任务
+   * - "添加定时: 每天9点发微博推广workerclaw" — 添加定时任务（自然语言）
+   * - "添加定时任务: weibo_pr; 0 9 * * *; 每天发一条微博推广workerclaw" — 精确格式
+   * - "删除定时: weibo_pr" — 删除定时任务
+   * - "暂停定时: weibo_pr" / "停止定时: weibo_pr" — 暂停任务
+   * - "恢复定时: weibo_pr" / "启动定时: weibo_pr" — 恢复任务
+   * - "定时历史" / "查看定时历史" — 查看执行历史
+   */
+  private parseSchedulerCommand(content: string): { action: string; param?: string } | null {
+    const trimmed = content.trim();
+
+    // 查看定时任务列表
+    if (/^(定时任务|定时列表|查看定时|查看定时任务)$/i.test(trimmed)) {
+      return { action: 'list' };
+    }
+
+    // 查看执行历史
+    if (/^(定时历史|查看定时历史|定时执行记录)$/i.test(trimmed)) {
+      return { action: 'history' };
+    }
+
+    // 添加定时任务
+    const addMatch = trimmed.match(/^(?:添加|新增|创建|设置)(?:定时任务|定时)?[:：]\s*(.+)$/i);
+    if (addMatch) {
+      return { action: 'add', param: addMatch[1].trim() };
+    }
+
+    // 删除定时任务
+    const removeMatch = trimmed.match(/^(?:删除|移除|取消)(?:定时任务|定时)?[:：]\s*(.+)$/i);
+    if (removeMatch) {
+      return { action: 'remove', param: removeMatch[1].trim() };
+    }
+
+    // 暂停定时任务
+    const pauseMatch = trimmed.match(/^(?:暂停|停止|禁用)(?:定时任务|定时)?[:：]\s*(.+)$/i);
+    if (pauseMatch) {
+      return { action: 'pause', param: pauseMatch[1].trim() };
+    }
+
+    // 恢复定时任务
+    const resumeMatch = trimmed.match(/^(?:恢复|启用|启动)(?:定时任务|定时)?[:：]\s*(.+)$/i);
+    if (resumeMatch) {
+      return { action: 'resume', param: resumeMatch[1].trim() };
+    }
+
+    return null;
+  }
+
+  /**
+   * 处理定时任务命令
+   */
+  private async handleSchedulerCommand(senderId: string, cmd: { action: string; param?: string }): Promise<void> {
+    if (!this.recurringTaskScheduler) {
+      await this.platformApi.sendPrivateMessage(
+        this.config.platform.botId,
+        senderId,
+        '⚠️ 定时任务调度器未启用。请在 config.json 中配置 recurringTasks。',
+      );
+      return;
+    }
+
+    switch (cmd.action) {
+      case 'list': {
+        const status = this.recurringTaskScheduler.getStatus();
+        if (status.tasks.length === 0) {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            senderId,
+            '📋 当前没有定时任务。\n\n添加示例：\n"添加定时: 每天9点和18点发一条微博推广workerclaw"\n\n精确格式：\n"添加定时: weibo_pr; 0 9,18 * * *; 发一条微博推广workerclaw"',
+          );
+          return;
+        }
+
+        const lines = status.tasks.map((t, i) => {
+          const statusIcon = t.enabled ? '✅' : '⏸️';
+          const sourceTag = t.source === 'config' ? '[配置]' : '[动态]';
+          const lastInfo = t.lastExecution
+            ? ` | 上次: ${t.lastExecution.success ? '✅' : '❌'} ${t.lastExecution.durationMs / 1000}s`
+            : ' | 未执行';
+          const todayInfo = ` | 今日: ${t.todayCount}次`;
+          const nextInfo = t.nextTrigger ? ` | 下次: ${t.nextTrigger}` : '';
+          const desc = t.description ? `\n   说明: ${t.description}` : '';
+          return `${statusIcon} [${i + 1}] ${sourceTag} ${t.id}\n   类型: ${t.type} | 调度: ${t.schedule}${lastInfo}${todayInfo}${nextInfo}${desc}`;
+        });
+
+        const header = `📋 定时任务列表 (${status.tasks.length}个, 状态: ${status.isRunning ? '运行中' : '已停止'}):\n\n`;
+        const footer = '\n\n操作: "添加定时: ..." / "暂停定时: ID" / "恢复定时: ID" / "删除定时: ID"';
+
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          header + lines.join('\n\n') + footer,
+        );
+        break;
+      }
+
+      case 'history': {
+        const history = this.recurringTaskScheduler.getHistory(undefined, 10);
+        if (history.length === 0) {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            senderId,
+            '📋 暂无执行历史记录。',
+          );
+          return;
+        }
+
+        const lines = history.map((h, i) => {
+          const time = new Date(h.timestamp).toLocaleString('zh-CN');
+          const icon = h.success ? '✅' : '❌';
+          const duration = (h.durationMs / 1000).toFixed(1);
+          return `${icon} [${i + 1}] ${time} | ${h.taskDefId} | ${duration}s${h.summary ? `\n   ${h.summary.substring(0, 80)}` : ''}`;
+        });
+
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          `📋 最近执行历史 (最近 ${history.length} 条):\n\n${lines.join('\n\n')}`,
+        );
+        break;
+      }
+
+      case 'add': {
+        await this.handleAddRecurringTask(senderId, cmd.param!);
+        break;
+      }
+
+      case 'remove': {
+        const taskId = cmd.param!;
+        const result = this.recurringTaskScheduler.removeTask(taskId);
+        if (result.success) {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            senderId,
+            `🗑️ 已删除定时任务: ${taskId}`,
+          );
+        } else {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            senderId,
+            `⚠️ ${result.error}`,
+          );
+        }
+        break;
+      }
+
+      case 'pause': {
+        const taskId = cmd.param!;
+        const result = this.recurringTaskScheduler.toggleTask(taskId, false);
+        if (result.success) {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            senderId,
+            `⏸️ 已暂停定时任务: ${taskId}`,
+          );
+        } else {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            senderId,
+            `⚠️ ${result.error}`,
+          );
+        }
+        break;
+      }
+
+      case 'resume': {
+        const taskId = cmd.param!;
+        const result = this.recurringTaskScheduler.toggleTask(taskId, true);
+        if (result.success) {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            senderId,
+            `▶️ 已恢复定时任务: ${taskId}`,
+          );
+        } else {
+          await this.platformApi.sendPrivateMessage(
+            this.config.platform.botId,
+            senderId,
+            `⚠️ ${result.error}`,
+          );
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * 处理添加定时任务（支持自然语言和精确格式）
+   * 
+   * 精确格式: "id; cron表达式; 描述; 类型; 每小时限制; 每天限制"
+   * 自然语言: LLM 解析后生成精确格式
+   */
+  private async handleAddRecurringTask(senderId: string, param: string): Promise<void> {
+    const scheduler = this.recurringTaskScheduler;
+    if (!scheduler) {
+      await this.platformApi.sendPrivateMessage(
+        this.config.platform.botId,
+        senderId,
+        '⚠️ 定时任务调度器未启用。',
+      );
+      return;
+    }
+    // 先尝试解析精确格式（分号分隔）
+    const parts = param.split(/[;；]/).map(p => p.trim());
+
+    if (parts.length >= 3) {
+      // 精确格式: id; cron; prompt; type?
+      const id = parts[0].replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u4e00-\u9fff]/g, '').substring(0, 30) || `task_${Date.now()}`;
+      const schedule = parts[1];
+      const prompt = parts[2];
+      const type = parts[3] || 'other';
+      const description = parts[4] || '';
+
+      // 验证 cron 表达式
+      try {
+        const { CronParser } = await import('../scheduler/recurring-task-scheduler.js');
+        new CronParser(schedule);
+      } catch (err) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          `⚠️ cron 表达式无效: "${schedule}"\n\n支持格式示例:\n- "0 9 * * *" — 每天9点\n- "0 9,12,18 * * *" — 每天9/12/18点\n- "*/30 * * * *" — 每30分钟`,
+        );
+        return;
+      }
+
+      const result = scheduler.addTask({
+        id,
+        type,
+        prompt,
+        schedule,
+        enabled: true,
+        description: description || undefined,
+      });
+
+      if (result.success) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          `✅ 定时任务已添加:\n` +
+          `   ID: ${id}\n` +
+          `   调度: ${schedule}\n` +
+          `   任务: ${prompt.substring(0, 60)}${prompt.length > 60 ? '...' : ''}\n` +
+          `   类型: ${type}`,
+        );
+      } else {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          `⚠️ ${result.error}`,
+        );
+      }
+      return;
+    }
+
+    // 自然语言格式：使用 LLM 解析
+    this.logger.info(`通过 LLM 解析定时任务指令: "${param}"`);
+
+    const systemPrompt = `你是一个任务解析助手。主人用自然语言描述了一个定时任务，你需要将其解析为结构化格式。
+
+输出严格的 JSON 格式（不要输出其他内容）：
+{
+  "id": "英文ID（简短，用下划线连接，如 weibo_pr）",
+  "schedule": "cron表达式（分钟 小时 * * *）",
+  "prompt": "任务描述（给 AI Agent 执行的完整指令）",
+  "type": "任务类型（weibo_post/tweet/general/other）",
+  "description": "简短中文说明（给主人看的）"
+}
+
+cron 表达式规则：
+- 格式: "分钟 小时 * * *"
+- 分钟: 0-59 或 */N
+- 小时: 0-23 或逗号分隔 或 */N
+- 示例: "0 9,12,18,21 * * *" = 每天 9/12/18/21 点整
+- 示例: "*/30 * * * *" = 每 30 分钟
+- 示例: "0 9 * * 1-5" = 工作日 9 点
+
+规则：
+- ID 使用英文，简短有意义
+- prompt 是给 AI 执行的完整指令，要具体明确
+- 如果用户说"每天X条"，在 prompt 中说明即可，不要在 cron 中处理
+- 默认每小时最多 2 次，每天最多 6 次（不需要在 JSON 中说明）`;
+
+    try {
+      const result = await this.agentEngine.generateReply(systemPrompt, `定时任务描述: "${param}"`);
+
+      if (!result) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          '❌ 无法解析定时任务指令，请使用精确格式或更详细的描述。',
+        );
+        return;
+      }
+
+      const jsonMatch = result.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          `❌ 解析结果格式异常，请使用精确格式: "id; cron表达式; 任务描述"\n\n例如:\n"添加定时: weibo_pr; 0 9,18 * * *; 每天发一条微博推广workerclaw"`,
+        );
+        return;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      // 验证必要字段
+      if (!parsed.id || !parsed.schedule || !parsed.prompt) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          '❌ 解析结果缺少必要字段（id/schedule/prompt），请重试。',
+        );
+        return;
+      }
+
+      // 验证 cron
+      try {
+        const { CronParser } = await import('../scheduler/recurring-task-scheduler.js');
+        new CronParser(parsed.schedule);
+      } catch (err) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          `❌ 生成的 cron 表达式无效: "${parsed.schedule}"\n\n请使用精确格式重新添加。`,
+        );
+        return;
+      }
+
+      const addResult = scheduler.addTask({
+        id: parsed.id,
+        type: parsed.type || 'other',
+        prompt: parsed.prompt,
+        schedule: parsed.schedule,
+        enabled: true,
+        description: parsed.description || undefined,
+      });
+
+      if (addResult.success) {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          `✅ 定时任务已添加:\n` +
+          `   ID: ${parsed.id}\n` +
+          `   调度: ${parsed.schedule}\n` +
+          `   任务: ${parsed.prompt.substring(0, 60)}${parsed.prompt.length > 60 ? '...' : ''}\n` +
+          `   说明: ${parsed.description || parsed.prompt.substring(0, 40)}\n\n` +
+          `用"定时任务"查看列表，"暂停定时: ${parsed.id}"可暂停`,
+        );
+      } else {
+        await this.platformApi.sendPrivateMessage(
+          this.config.platform.botId,
+          senderId,
+          `⚠️ ${addResult.error}`,
+        );
+      }
+    } catch (err) {
+      this.logger.error('LLM 解析定时任务失败', err);
+      await this.platformApi.sendPrivateMessage(
+        this.config.platform.botId,
+        senderId,
+        '❌ 解析定时任务时出错，请使用精确格式:\n"添加定时: id; cron表达式; 任务描述"\n\n例如:\n"添加定时: weibo_pr; 0 9,18 * * *; 发一条微博推广workerclaw"',
       );
     }
   }

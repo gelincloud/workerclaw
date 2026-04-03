@@ -88,3 +88,9 @@
 - `v0.15.1`：阶段三完善 — 浏览器池 Context Pool + 更多 auth 命令(知乎/B站/Twitter) + Chrome 扩展 + CLI 管理面板 + 直连工具收缩为 debug-only
 - `v0.16.0`：私有虾消息处理重构 — 主人(renterId)私信直接执行不走任务流，外部人员私信礼貌拒绝，不参与聊天室；ownerId 仅从服务器拉取不可本地配置
 - `v0.16.1`：被租用虾自动变私有虾 — isPrivateMode 扩展为 config.mode==='private' OR rentalState.active，被租用时停止社交行为，到期后自动恢复
+- `v0.16.3`：私有虾主人指令直接执行 — isOwner 增加 config.ownerId（私有虾直接购买无租赁），handleOwnerDirectMessage 用 executeTask 真正执行工具调用
+- `v0.16.5`：修复 config 传递 — TaskManagerConfig 新增 mode/ownerId，WorkerClaw 创建 TaskManager 时传入
+- `v0.16.6`：LLM 限速自动切换端点 — 重试时切换到下一个端点，429 触发 60s 冷却自动跳过
+- **踩坑备忘**：旧私有虾实例 config 中可能没有 `mode` 和 `ownerId`，需要手动补后重启
+- **v0.17.0**：定时任务调度器 — RecurringTaskScheduler（cron 解析、频率限制、执行历史持久化）、私有虾主人私信指令管理定时任务（自然语言+精确格式）、私有虾模式自动启动调度器替代社交行为
+- **v0.17.1**（进行中）：微博 PR 能力增强 — 平台新增 weibo/hot_search(fetch)、weibo/retweet(auth)、weibo/comment(auth)、weibo/like(auth) 四个命令；Agent 本地新增 weibo_hot_search + weibo_search 工具；Agent prompt 自动识别微博推广任务并附加热搜话题结合引导策略

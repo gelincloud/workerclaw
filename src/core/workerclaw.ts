@@ -12,8 +12,10 @@ import { TaskManager } from '../task/task-manager.js';
 import { BehaviorScheduler, type BehaviorCallbacks } from '../active-behavior/index.js';
 import { getBuiltinSkills } from '../skills/index.js';
 import { ExperienceManager, DEFAULT_EXPERIENCE_CONFIG } from '../experience/index.js';
+import { RecurringTaskScheduler, DEFAULT_SCHEDULER_CONFIG } from '../scheduler/index.js';
 import type { WorkerClawConfig } from './config.js';
 import type { ExperienceConfig } from '../experience/types.js';
+import type { RecurringTaskSchedulerConfig } from '../scheduler/recurring-task-scheduler.js';
 
 // ==================== WorkerClaw 主类 ====================
 
@@ -27,6 +29,7 @@ export class WorkerClaw {
   private taskManager: TaskManager;
   private behaviorScheduler: BehaviorScheduler;
   private experienceManager: ExperienceManager | null = null;
+  private recurringTaskScheduler: RecurringTaskScheduler | null = null;
 
   private isRunning = false;
 
@@ -61,6 +64,8 @@ export class WorkerClaw {
         security: config.security,
         task: config.task,
         personality: config.personality,
+        mode: config.mode,
+        ownerId: (config as any).ownerId,
       },
       this.eventBus,
       this.securityGate,
@@ -101,6 +106,20 @@ export class WorkerClaw {
     // 将经验管理器注入 TaskManager（同时传递给 AgentEngine）
     if (this.experienceManager) {
       this.taskManager.setExperienceManager(this.experienceManager);
+    }
+
+    // 定时任务调度器（私有虾专用）
+    const recurringConfig = config.recurringTasks;
+    if (recurringConfig && recurringConfig.enabled) {
+      const schedulerConfig: RecurringTaskSchedulerConfig = {
+        ...DEFAULT_SCHEDULER_CONFIG,
+        ...recurringConfig,
+        tasks: recurringConfig.tasks || [],
+      };
+      this.recurringTaskScheduler = new RecurringTaskScheduler(schedulerConfig, config.llm);
+      this.recurringTaskScheduler.setAgentEngine(this.taskManager.getAgentEngine());
+      // 注入到 TaskManager 供主人指令使用
+      this.taskManager.setRecurringTaskScheduler(this.recurringTaskScheduler);
     }
 
     // 注入 WebSocket 客户端（用于发送聊天室消息等）
@@ -352,12 +371,16 @@ export class WorkerClaw {
       });
       this.behaviorScheduler.start();
 
-      this.behaviorScheduler.start();
-
       // 私有模式（config.mode === 'private'）：跳过社交行为
       if (this.config.mode === 'private') {
         this.behaviorScheduler.stop();
         this.logger.info('🔒 私有模式：智能活跃行为已禁用');
+      }
+
+      // 私有虾模式：启动定时任务调度器（替代社交行为）
+      if (this.config.mode === 'private' && this.recurringTaskScheduler) {
+        this.recurringTaskScheduler.start();
+        this.logger.info('⏰ 定时任务调度器已启动（私有虾模式）');
       }
 
       // 监听租用状态变化：租用到期后恢复社交行为（仅限原模式为 public 的虾）
@@ -386,6 +409,9 @@ export class WorkerClaw {
 
     // Phase 4: 停止行为调度器
     this.behaviorScheduler.stop();
+
+    // 停止定时任务调度器
+    this.recurringTaskScheduler?.stop();
 
     // Phase 6: 关闭经验系统
     this.experienceManager?.dispose();
@@ -419,6 +445,7 @@ export class WorkerClaw {
       behavior: this.behaviorScheduler.getStats(),
       experience: this.experienceManager?.getStats() || null,
       rental: this.taskManager.getRentalState(),
+      recurringTasks: this.recurringTaskScheduler?.getStatus() || null,
     };
   }
 
@@ -441,6 +468,13 @@ export class WorkerClaw {
    */
   getExperienceManager(): ExperienceManager | null {
     return this.experienceManager;
+  }
+
+  /**
+   * 获取定时任务调度器
+   */
+  getRecurringTaskScheduler(): RecurringTaskScheduler | null {
+    return this.recurringTaskScheduler;
   }
 }
 

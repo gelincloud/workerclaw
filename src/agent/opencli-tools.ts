@@ -28,6 +28,7 @@
  *   - smzdm: search
  *   - sinafinance: news, stock, rolling-news
  *   - xueqiu: hot, hot-stock, search, stock, feed
+ *   - weibo: hot_search, search (通过 web_cli 代理还可调用: post, retweet, comment, like, profile)
  */
 
 import { createLogger } from '../core/logger.js';
@@ -277,6 +278,30 @@ const OPENCLI_TOOLS: OpenCliToolDef[] = [
     site: '36kr', command: 'hot',
     args: { limit: { type: 'number', default: 20, description: '返回条数' } },
     execute: async (args) => fetch36KrHot(args),
+  },
+
+  // === 微博热搜 ===
+  {
+    name: 'weibo_hot_search',
+    description: '获取微博热搜榜（公开数据，可用于结合热搜话题生成推广文案）',
+    site: 'weibo', command: 'hot_search',
+    args: {
+      limit: { type: 'number', default: 20, description: '返回条数' },
+      category: { type: 'string', default: 'realtime', description: '分类: all=全部, realtime=实时, hot=热门, social=社会, ent=娱乐, finance=财经' },
+    },
+    execute: async (args) => fetchWeiboHotSearch(args),
+  },
+
+  // === 微博搜索 ===
+  {
+    name: 'weibo_search',
+    description: '搜索微博内容（公开搜索，不需要登录）',
+    site: 'weibo', command: 'search',
+    args: {
+      query: { type: 'string', required: true, description: '搜索关键词' },
+      limit: { type: 'number', default: 10, description: '返回条数' },
+    },
+    execute: async (args) => searchWeibo(args),
   },
 ];
 
@@ -727,6 +752,103 @@ async function fetch36KrHot(args: Record<string, any>): Promise<string> {
   }
 }
 
+// ==================== 微博热搜 ====================
+
+async function fetchWeiboHotSearch(args: Record<string, any>): Promise<string> {
+  const limit = Math.min(args.limit || 20, 50);
+  const containerid = '106003type%3D25%26t%3D3%26disable_hot%3D1%26filter_type%3Drealtimehot';
+
+  try {
+    const data = await httpGet(`https://m.weibo.cn/api/container/getIndex?containerid=${containerid}`, 10000);
+    const cards = data?.data?.cards || [];
+    const items: Array<{rank: number; title: string; hot: string; label: string; url: string}> = [];
+
+    for (const card of cards) {
+      if (card.card_group) {
+        for (const item of card.card_group) {
+          if (item.desc) {
+            items.push({
+              rank: items.length + 1,
+              title: item.desc,
+              hot: item.desc_extr || '',
+              label: item.label_name || '',
+              url: item.scheme || '',
+            });
+          }
+        }
+      }
+    }
+
+    if (items.length > 0) {
+      const formatted = items.slice(0, limit).map(item =>
+        `[${item.rank}] ${item.title}${item.label ? ' [' + item.label + ']' : ''}${item.hot ? ' (热度:' + item.hot + ')' : ''}${item.url ? '\n   链接: ' + item.url : ''}`
+      ).join('\n');
+      return `微博热搜榜 (${items.length}条):\n\n${formatted}`;
+    }
+  } catch {
+    // fallback: weibo.com/ajax/side/hotSearch
+  }
+
+  try {
+    const resp = await fetch('https://weibo.com/ajax/side/hotSearch', {
+      headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error('备用接口也失败');
+    const data = await resp.json() as { data: { realtime: Array<{word: string; num: number; label_name: string}> } };
+    const realtime = data?.data?.realtime || [];
+    const items = realtime.slice(0, limit).map((item, i) => ({
+      rank: i + 1,
+      title: item.word,
+      hot: item.num ? String(item.num) : '',
+      label: item.label_name || '',
+      url: `https://s.weibo.com/weibo?q=${encodeURIComponent(item.word)}`,
+    }));
+
+    return `微博热搜榜 (${items.length}条):\n\n${items.map(item =>
+      `[${item.rank}] ${item.title}${item.label ? ' [' + item.label + ']' : ''}${item.hot ? ' (热度:' + item.hot + ')' : ''}\n   链接: ${item.url}`
+    ).join('\n')}`;
+  } catch (err) {
+    return `获取微博热搜失败: ${(err as Error).message}`;
+  }
+}
+
+// ==================== 微博搜索 ====================
+
+async function searchWeibo(args: Record<string, any>): Promise<string> {
+  const q = encodeURIComponent(args.query || '');
+  const limit = Math.min(args.limit || 10, 30);
+  const data = await httpGet(`https://m.weibo.cn/api/container/getIndex?containerid=100103type%3D1%26q%3D${q}&page_type=searchall&page=1`);
+  const cards = data?.data?.cards || [];
+  const items: Array<{text: string; user: string; created_at: string; reposts: number; comments: number; likes: number}> = [];
+
+  for (const card of cards) {
+    if (card.card_group) {
+      for (const item of card.card_group) {
+        if (item.mblog) {
+          const mb = item.mblog;
+          items.push({
+            text: (mb.text || '').replace(/<[^>]+>/g, '').slice(0, 200),
+            user: mb.user?.screen_name || '',
+            created_at: mb.created_at || '',
+            reposts: mb.reposts_count || 0,
+            comments: mb.comments_count || 0,
+            likes: mb.attitudes_count || 0,
+          });
+        }
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    return `微博搜索 "${args.query}": 暂无结果`;
+  }
+
+  return `微博搜索 "${args.query}" (${items.length}条):\n\n${items.slice(0, limit).map((item, i) =>
+    `[${i + 1}] @${item.user} (${item.created_at})\n   ${item.text}\n   转发:${item.reposts} 评论:${item.comments} 点赞:${item.likes}`
+  ).join('\n\n')}`;
+}
+
 // ==================== 导出为 ToolDefinition[] ====================
 
 /**
@@ -887,8 +1009,22 @@ export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
   return {
     name: 'web_cli',
     description: `通过平台代理调用 OpenCLI 命令获取互联网数据。支持 fetch（公开API）、browser（网页渲染）、auth（带登录态）三种策略。
-可用命令格式: site/command，如 hackernews/top, stackoverflow/hot, v2ex/hot, reddit/hot, wikipedia/search, weibo/profile, browser/fetch 等。
+可用命令格式: site/command，如 hackernews/top, stackoverflow/hot, v2ex/hot, reddit/hot, wikipedia/search, weibo/hot_search, weibo/search, weibo/post, weibo/retweet, weibo/comment, weibo/like, weibo/profile, browser/fetch 等。
 使用 web_cli_describe 工具查看完整命令列表。
+
+**重要：登录态管理**
+- auth 策略命令（如 weibo/post、weibo/profile、weibo/retweet、weibo/comment、weibo/like、zhihu/profile 等）的登录态由平台内部自动管理，无需向用户询问或确认登录状态。
+- 平台通过塘主预先同步的 Cookie 自动注入登录态，Agent 只需提供业务参数（如微博内容、搜索关键词等）。
+- 如果 auth 命令执行失败并提示"未配置登录态"或"登录态已过期"，才需要告知用户通过 Chrome 扩展同步凭据。
+
+**微博 PR 能力**：
+- weibo/hot_search: 获取微博热搜榜（fetch, 公开），可用于结合热搜话题生成自然推广文案
+- weibo/search: 搜索微博内容（fetch, 公开）
+- weibo/post: 发布微博（auth, 写操作）
+- weibo/retweet: 转发微博（auth, 写操作），参数: id(必填), comment(转发评语), is_comment(是否作为评论转发)
+- weibo/comment: 评论微博（auth, 写操作），参数: id(必填), content(必填)
+- weibo/like: 点赞微博（auth, 写操作），参数: id(必填), undo(是否取消点赞)
+
 参数: site (必填), command (必填), query (搜索关键词), limit (返回条数), taskId (关联任务ID), dryRun (试运行)`,
     requiredLevel: 'limited',
     parameters: {

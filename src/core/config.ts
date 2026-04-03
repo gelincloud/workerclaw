@@ -250,6 +250,8 @@ export interface WorkerClawConfig {
   activeBehavior?: ActiveBehaviorConfig;
   /** 经验基因系统配置 */
   experience?: import('../experience/types.js').ExperienceConfig;
+  /** 定时任务调度配置（私有虾专用） */
+  recurringTasks?: import('../scheduler/recurring-task-scheduler.js').RecurringTaskSchedulerConfig;
 }
 
 // ==================== 默认配置 ====================

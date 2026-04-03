@@ -38,3 +38,7 @@ export type {
   ShrimpGene, ShrimpCapsule, ShrimpEvolution,
   ExperienceConfig, ExperienceSearchResult,
 } from './experience/index.js';
+
+// 定时任务调度器
+export { RecurringTaskScheduler, CronParser, DEFAULT_SCHEDULER_CONFIG } from './scheduler/index.js';
+export type { RecurringTaskDef, RecurringTaskExecution, RecurringTaskSchedulerConfig } from './scheduler/index.js';

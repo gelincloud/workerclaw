@@ -68,14 +68,15 @@ export class LLMClient {
   }
 
   /**
-   * 获取当前有效的配置（可能是轮换后的）
+   * 获取当前有效的配置（可能已轮换）
+   * @param skipApiKey 可选，跳过指定 API Key 的端点（用于重试时切换）
    */
-  private getCurrentConfig(): LLMConfig {
+  private getCurrentConfig(skipApiKey?: string): LLMConfig {
     if (!this.rotator) {
       return this.config;
     }
     
-    const endpoint = this.rotator.getNextEndpoint();
+    const endpoint = this.rotator.getNextEndpoint(skipApiKey);
     
     // 返回合并后的配置
     return {
@@ -88,6 +89,7 @@ export class LLMClient {
 
   /**
    * 发送聊天请求
+   * 失败时自动切换到下一个端点重试
    */
   async chat(request: ChatRequest): Promise<LLMResponse> {
     const {
@@ -97,38 +99,41 @@ export class LLMClient {
       temperature = this.config.safety.temperature,
     } = request;
 
-    // 获取当前配置（可能已轮换）
-    const currentConfig = this.getCurrentConfig();
-    const currentApiKey = currentConfig.apiKey;
-
-    // 构建请求体（由适配器处理格式差异）
-    const body = this.adapter.buildRequestBody(
-      messages,
-      tools,
-      currentConfig,
-      maxTokens,
-      temperature
-    );
-
-    // 调试日志
-    this.logger.debug('LLM 请求', {
-      provider: this.adapter.type,
-      model: currentConfig.model,
-      messageCount: messages.length,
-      toolCount: tools?.length || 0,
-      hasTools: !!(body.tools || body.functionDeclarations),
-      isRotated: this.rotator !== null,
-    });
-
-    // 带重试的请求
+    // 带重试的请求（每次重试切换到不同端点）
     let lastError: Error | null = null;
+    let failedApiKey: string | undefined;
+
     for (let attempt = 1; attempt <= this.config.retry.maxRetries; attempt++) {
+      // 每次重试都获取新端点（跳过上次失败的）
+      const currentConfig = this.getCurrentConfig(failedApiKey);
+      failedApiKey = undefined; // 重置，只有本次失败才设置
+
+      // 构建请求体（由适配器处理格式差异）
+      const body = this.adapter.buildRequestBody(
+        messages,
+        tools,
+        currentConfig,
+        maxTokens,
+        temperature
+      );
+
+      // 调试日志
+      this.logger.debug('LLM 请求', {
+        provider: this.adapter.type,
+        model: currentConfig.model,
+        messageCount: messages.length,
+        toolCount: tools?.length || 0,
+        hasTools: !!(body.tools || body.functionDeclarations),
+        isRotated: this.rotator !== null,
+        attempt: `${attempt}/${this.config.retry.maxRetries}`,
+      });
+
       try {
         const result = await this.adapter.sendRequest(body, currentConfig, this.logger);
         
         // 记录成功
         if (this.rotator) {
-          this.rotator.recordSuccess(currentApiKey);
+          this.rotator.recordSuccess(currentConfig.apiKey);
         }
 
         return {
@@ -142,16 +147,18 @@ export class LLMClient {
         };
       } catch (err) {
         lastError = err as Error;
+        failedApiKey = currentConfig.apiKey;
         
-        // 记录失败
+        // 记录失败（429 会触发冷却）
         if (this.rotator) {
-          this.rotator.recordFailure(currentApiKey, lastError.message);
+          this.rotator.recordFailure(currentConfig.apiKey, lastError.message);
         }
         
         this.logger.warn(`LLM 请求失败 (attempt ${attempt}/${this.config.retry.maxRetries})`, lastError.message);
 
         if (attempt < this.config.retry.maxRetries) {
           const delay = this.config.retry.backoffMs * Math.pow(2, attempt - 1);
+          this.logger.debug(`等待 ${delay}ms 后切换端点重试...`);
           await this.sleep(delay);
         }
       }

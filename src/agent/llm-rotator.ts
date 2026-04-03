@@ -52,6 +52,8 @@ interface EndpointState {
   config: LLMProviderEndpoint;
   stats: RotationStats;
   recentCalls: number[]; // 最近调用时间戳（用于计算 QPS）
+  /** 429 限速冷却截止时间戳（冷却期内跳过该端点） */
+  cooldownUntil?: number;
 }
 
 // ============================================================================
@@ -95,9 +97,9 @@ export class LLMKeyRotator {
 
   /**
    * 获取下一个可用的端点
-   * 使用加权轮换算法
+   * 使用加权轮换算法，自动跳过冷却中的端点
    */
-  getNextEndpoint(): LLMProviderEndpoint {
+  getNextEndpoint(skipApiKey?: string): LLMProviderEndpoint {
     const now = Date.now();
     
     // 清理过期的调用记录（1 分钟前的）
@@ -108,6 +110,14 @@ export class LLMKeyRotator {
 
     // 过滤可用的端点
     const available = this.endpoints.filter(ep => {
+      // 跳过指定要跳过的端点（失败重试时使用）
+      if (skipApiKey && ep.config.apiKey === skipApiKey) {
+        return false;
+      }
+      // 跳过冷却中的端点（429 限速）
+      if (ep.cooldownUntil && now < ep.cooldownUntil) {
+        return false;
+      }
       // 检查是否超过 QPS 限制
       if (ep.config.maxQps && ep.stats.currentQps >= ep.config.maxQps) {
         return false;
@@ -116,7 +126,7 @@ export class LLMKeyRotator {
     });
 
     if (available.length === 0) {
-      this.logger?.warn('所有 LLM 端点都达到 QPS 限制，使用第一个端点');
+      this.logger?.warn('所有 LLM 端点都不可用（冷却/QPS 限制），使用第一个端点');
       return this.endpoints[0].config;
     }
 
@@ -154,13 +164,22 @@ export class LLMKeyRotator {
 
   /**
    * 记录失败调用
+   * 429 限速错误会触发短期冷却（60 秒），期间自动跳过该端点
    */
   recordFailure(apiKey: string, error: string): void {
     const ep = this.endpoints.find(e => e.config.apiKey === apiKey);
     if (ep) {
       ep.stats.failedCalls++;
       ep.stats.lastError = error;
-      this.logger?.warn(`LLM 端点 ${ep.stats.name} 调用失败: ${error}`);
+
+      // 429 限速 → 冷却 60 秒
+      if (error.includes('429') || error.includes('速率限制') || error.includes('rate limit')) {
+        const cooldownMs = 60_000;
+        ep.cooldownUntil = Date.now() + cooldownMs;
+        this.logger?.warn(`LLM 端点 ${ep.stats.name} 触发限速，冷却 ${cooldownMs / 1000}s 后恢复`);
+      } else {
+        this.logger?.warn(`LLM 端点 ${ep.stats.name} 调用失败: ${error}`);
+      }
     }
   }
 
