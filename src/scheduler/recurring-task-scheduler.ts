@@ -244,12 +244,6 @@ export class RecurringTaskScheduler {
 
     if (this.isRunning) return;
 
-    const allTasks = this.getAllTasks();
-    if (allTasks.length === 0) {
-      this.logger.info('没有配置定时任务，调度器不启动');
-      return;
-    }
-
     this.isRunning = true;
 
     this.timer = setInterval(() => {
@@ -258,11 +252,17 @@ export class RecurringTaskScheduler {
       });
     }, this.config.checkIntervalMs || 60 * 1000);
 
-    const taskList = allTasks.filter(t => t.enabled).map(t => t.id).join(', ');
-    this.logger.info(`定时任务调度器已启动 (间隔: ${this.config.checkIntervalMs! / 1000}s, 任务: ${taskList})`);
+    this.logger.info(`定时任务调度器已启动 (间隔: ${this.config.checkIntervalMs! / 1000}s)`);
 
-    // 立即执行一次检查
-    this.tick().catch(() => {});
+    // 如果已有任务，立即执行一次检查
+    const allTasks = this.getAllTasks().filter(t => t.enabled);
+    if (allTasks.length > 0) {
+      const taskList = allTasks.map(t => t.id).join(', ');
+      this.logger.info(`当前任务: ${taskList}`);
+      this.tick().catch(() => {});
+    } else {
+      this.logger.info('暂无任务，等待主人通过私信添加');
+    }
   }
 
   /**
@@ -461,6 +461,15 @@ export class RecurringTaskScheduler {
       this.cronParsers.delete(task.id);
     }
 
+    // 如果调度器未运行但有启用的任务，自动启动
+    if (!this.isRunning && this.config.enabled) {
+      const hasEnabledTasks = this.getAllTasks().some(t => t.enabled);
+      if (hasEnabledTasks) {
+        this.start();
+        this.logger.info(`检测到首个定时任务 [${task.id}]，调度器自动启动`);
+      }
+    }
+
     this.logger.info(`定时任务已添加/更新 [${task.id}]`);
     return { success: true };
   }
@@ -509,6 +518,12 @@ export class RecurringTaskScheduler {
     // 如果是动态任务，更新 Map
     if (this.dynamicTasks.has(taskId)) {
       this.dynamicTasks.set(taskId, task);
+    }
+
+    // 启用任务时，如果调度器未运行，自动启动
+    if (enabled && !this.isRunning && this.config.enabled) {
+      this.start();
+      this.logger.info(`任务 [${taskId}] 已启用，调度器自动启动`);
     }
 
     this.logger.info(`定时任务 ${enabled ? '启用' : '禁用'} [${taskId}]`);

@@ -109,12 +109,18 @@ export class WorkerClaw {
     }
 
     // 定时任务调度器（私有虾专用）
+    // 私有虾模式下自动创建调度器实例，允许主人通过私信动态添加定时任务
+    // 公域模式下仅在显式配置 recurringTasks.enabled=true 时创建
     const recurringConfig = config.recurringTasks;
-    if (recurringConfig && recurringConfig.enabled) {
+    const isPrivateShrimp = config.mode === 'private';
+    const shouldCreateScheduler = isPrivateShrimp || (recurringConfig && recurringConfig.enabled);
+
+    if (shouldCreateScheduler) {
       const schedulerConfig: RecurringTaskSchedulerConfig = {
         ...DEFAULT_SCHEDULER_CONFIG,
+        enabled: true, // 私有虾默认启用；公域继承用户配置
         ...recurringConfig,
-        tasks: recurringConfig.tasks || [],
+        tasks: recurringConfig?.tasks || [],
       };
       this.recurringTaskScheduler = new RecurringTaskScheduler(schedulerConfig, config.llm);
       this.recurringTaskScheduler.setAgentEngine(this.taskManager.getAgentEngine());

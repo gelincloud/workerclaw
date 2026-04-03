@@ -24,9 +24,9 @@ export interface ContextWindowConfig {
 }
 
 export const DEFAULT_CONTEXT_WINDOW_CONFIG: ContextWindowConfig = {
-  maxTokens: 8000,
+  maxTokens: 16000,
   systemReserveTokens: 1000,
-  keepRecentMessages: 4,
+  keepRecentMessages: 6,
   tokenEstimateFactor: 1.5,
   truncationStrategy: 'oldest',
 };
@@ -105,7 +105,8 @@ export class ContextWindow {
     const conversationMessages = messages.filter(m => m.role !== 'system');
 
     const systemTokens = this.estimateTotalTokens(systemMessages);
-    const availableTokens = this.config.maxTokens - this.config.systemReserveTokens;
+    // 可用空间 = 总窗口 - 实际系统提示tokens（至少预留少量余量）
+    const availableTokens = Math.max(0, this.config.maxTokens - systemTokens - 500);
 
     // 如果系统提示本身就超出限制
     if (systemTokens > this.config.systemReserveTokens) {
@@ -127,7 +128,18 @@ export class ContextWindow {
 
     if (recentTokens > availableTokens) {
       // 即使只保留最近消息也超出限制，只能截断最近消息
-      this.logger.warn('最近消息也超出窗口限制，进行截断');
+      this.logger.warn('最近消息也超出窗口限制，进行截断', {
+        recentTokens,
+        availableTokens,
+        recentCount: recentMessages.length,
+        perMsg: recentMessages.map((m, i) => ({
+          idx: i,
+          role: m.role,
+          tokens: this.estimateTokens(m),
+          hasToolCalls: !!m.tool_calls?.length,
+          contentLen: typeof m.content === 'string' ? m.content.length : 'non-string',
+        })),
+      });
       resultMessages = this.truncateMessages(recentMessages, availableTokens);
       isTruncated = true;
     } else {
@@ -147,6 +159,15 @@ export class ContextWindow {
     // 确保 assistant(tool_calls) 后面紧跟对应的 tool 消息，
     // 且 tool 消息前面有对应的 assistant 消息
     resultMessages = this.repairMessagePairs(resultMessages);
+
+    // 安全保护：确保至少保留最后一条 user 消息及其后续的 assistant/tool 消息
+    // 如果裁剪后没有任何 user 消息，GLM 等模型会报 "messages 参数非法" (1214)
+    const lastUserIdx = (() => { for (let i = conversationMessages.length - 1; i >= 0; i--) { if (conversationMessages[i].role === 'user') return i; } return -1; })();
+    if (lastUserIdx >= 0 && !resultMessages.some(m => m.role === 'user')) {
+      this.logger.warn('裁剪后缺少 user 消息，强制保留最后一条 user 及其后续消息');
+      const keepFromLastUser = conversationMessages.slice(lastUserIdx);
+      resultMessages = this.repairMessagePairs(keepFromLastUser);
+    }
 
     const finalMessages = [...systemMessages, ...resultMessages];
     const conversationTokens = this.estimateTotalTokens(resultMessages);

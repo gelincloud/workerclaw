@@ -2533,7 +2533,7 @@ ${existingVotesText}
       await this.platformApi.sendPrivateMessage(
         this.config.platform.botId,
         senderId,
-        '⚠️ 定时任务调度器未启用。请在 config.json 中配置 recurringTasks。',
+        '⚠️ 定时任务调度器不可用（仅私有虾模式支持）。',
       );
       return;
     }

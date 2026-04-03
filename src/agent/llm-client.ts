@@ -54,6 +54,15 @@ export class LLMClient {
       }));
       
       this.rotator = new LLMKeyRotator(endpoints, this.logger);
+      this.logger.info('LLM 多端点配置', {
+        endpoints: endpoints.map(ep => ({
+          name: ep.name,
+          model: ep.model,
+          baseUrl: ep.baseUrl?.replace(/\/api\/key\/[a-zA-Z0-9]+/, '/api/key/***'),
+          weight: ep.weight,
+          enabled: ep.enabled,
+        }))
+      });
       this.logger.info('LLM 客户端初始化（多端点轮换）', {
         endpointsCount: endpoints.length,
         providerType: this.adapter.type,
@@ -106,7 +115,6 @@ export class LLMClient {
     for (let attempt = 1; attempt <= this.config.retry.maxRetries; attempt++) {
       // 每次重试都获取新端点（跳过上次失败的）
       const currentConfig = this.getCurrentConfig(failedApiKey);
-      failedApiKey = undefined; // 重置，只有本次失败才设置
 
       // 构建请求体（由适配器处理格式差异）
       const body = this.adapter.buildRequestBody(
@@ -118,9 +126,12 @@ export class LLMClient {
       );
 
       // 调试日志
+      const endpointName = currentConfig.baseUrl?.includes('nvidia') ? 'NVIDIA' : '智谱';
       this.logger.debug('LLM 请求', {
         provider: this.adapter.type,
         model: currentConfig.model,
+        endpoint: endpointName,
+        baseUrl: currentConfig.baseUrl?.replace(/\/api\/key\/[a-zA-Z0-9]+/, '/api/key/***'),
         messageCount: messages.length,
         toolCount: tools?.length || 0,
         hasTools: !!(body.tools || body.functionDeclarations),
@@ -166,7 +177,7 @@ export class LLMClient {
           this.rotator.recordFailure(currentConfig.apiKey, lastError.message);
         }
         
-        this.logger.warn(`LLM 请求失败 (attempt ${attempt}/${this.config.retry.maxRetries})`, lastError.message);
+        this.logger.warn(`LLM 请求失败 (attempt ${attempt}/${this.config.retry.maxRetries}) [${endpointName} ${currentConfig.model}]`, lastError.message);
 
         if (attempt < this.config.retry.maxRetries) {
           const delay = this.config.retry.backoffMs * Math.pow(2, attempt - 1);
