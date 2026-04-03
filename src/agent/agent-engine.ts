@@ -149,7 +149,10 @@ export class AgentEngine {
       });
 
       // LLM 调用循环（支持工具调用）
-      const finalResponse = await this.llmLoop(task, context);
+      // 主人直接指令（owner- 前缀）给更多轮次，因为可能涉及多步操作（热搜→分析→发帖→互动）
+      const isOwnerDirect = task.taskId.startsWith('owner-');
+      const maxRounds = isOwnerDirect ? 20 : 15;
+      const finalResponse = await this.llmLoop(task, context, maxRounds);
 
       // 保存最终回复
       this.sessionManager.addMessage(task.taskId, {
