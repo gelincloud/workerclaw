@@ -40,6 +40,11 @@ export interface AgentEngineConfig {
   llm: LLMConfig;
   personality: PersonalityConfig;
   security: SecurityConfig;
+  /** 平台配置（botId、ownerId 等） */
+  platform?: {
+    botId?: string;
+    ownerId?: string;
+  };
   /** 会话管理配置 */
   session?: {
     maxActiveSessions?: number;
@@ -437,6 +442,8 @@ export class AgentEngine {
         remainingMs: context.timeoutMs - (Date.now() - context.receivedAt),
         toolCallCount: 0,
         maxToolCalls: 20,
+        botId: this.config.platform?.botId || '',
+        ownerId: this.config.platform?.ownerId || null,
       };
 
       let result: { success: boolean; content: string; error?: string };

@@ -968,6 +968,12 @@ export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
       const botId = (context as any)?.botId;
       if (botId) headers['X-Bot-Id'] = botId;
 
+      // 如果有 ownerId（私有虾塘主），也传递，让平台能获取凭据
+      const ownerId = (context as any)?.ownerId;
+      if (ownerId) {
+        body.ownerId = ownerId;
+      }
+
       const timeoutMs = Math.min((context as any)?.remainingMs || 30000, 30000);
 
       const response = await fetch(executeUrl, {

@@ -110,7 +110,15 @@ export class TaskManager {
 
     // Agent 引擎
     this.agentEngine = new AgentEngine(
-      { llm: config.llm, personality: config.personality, security: config.security },
+      {
+        llm: config.llm,
+        personality: config.personality,
+        security: config.security,
+        platform: {
+          botId: config.platform.botId,
+          ownerId: config.ownerId,
+        },
+      },
       eventBus,
     );
 
