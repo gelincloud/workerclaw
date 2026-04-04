@@ -18,6 +18,7 @@ import type { AgentEngine } from '../agent/agent-engine.js';
 import type { Task, TaskExecutionContext, TaskResult, TaskType } from '../types/task.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { homedir } from 'os';
 
 // ==================== 类型定义 ====================
 
@@ -66,10 +67,13 @@ export interface RecurringTaskSchedulerConfig {
   tasks: RecurringTaskDef[];
 }
 
+/** WorkerClaw 数据根目录（~/.workerclaw），所有持久化数据存放于此 */
+const WORKERCLAW_DATA_DIR = path.join(homedir(), '.workerclaw');
+
 export const DEFAULT_SCHEDULER_CONFIG: Omit<RecurringTaskSchedulerConfig, 'tasks'> = {
   enabled: false,
   checkIntervalMs: 60 * 1000,
-  historyDir: './data/scheduler',
+  historyDir: path.join(WORKERCLAW_DATA_DIR, 'scheduler'),
 };
 
 // ==================== Cron 解析器 ====================
@@ -224,6 +228,9 @@ export class RecurringTaskScheduler {
 
     // 加载历史记录
     this.loadHistory();
+
+    // 加载动态任务（持久化恢复）
+    this.loadDynamicTasks();
   }
 
   /**
@@ -454,6 +461,9 @@ export class RecurringTaskScheduler {
 
     this.dynamicTasks.set(task.id, task);
 
+    // 持久化动态任务
+    this.saveDynamicTasks();
+
     // 更新 cron 解析器
     if (task.enabled) {
       this.cronParsers.set(task.id, new CronParser(task.schedule));
@@ -489,6 +499,10 @@ export class RecurringTaskScheduler {
 
     this.dynamicTasks.delete(taskId);
     this.cronParsers.delete(taskId);
+
+    // 持久化动态任务
+    this.saveDynamicTasks();
+
     this.logger.info(`定时任务已删除 [${taskId}]`);
     return { success: true };
   }
@@ -515,9 +529,10 @@ export class RecurringTaskScheduler {
       this.cronParsers.delete(task.id);
     }
 
-    // 如果是动态任务，更新 Map
+    // 如果是动态任务，更新 Map 并持久化
     if (this.dynamicTasks.has(taskId)) {
       this.dynamicTasks.set(taskId, task);
+      this.saveDynamicTasks();
     }
 
     // 启用任务时，如果调度器未运行，自动启动
@@ -630,11 +645,58 @@ export class RecurringTaskScheduler {
     }
   }
 
+  /** 动态任务持久化文件路径 */
+  private getDynamicTasksFilePath(): string {
+    return path.join(WORKERCLAW_DATA_DIR, 'dynamic-tasks.json');
+  }
+
+  /** 从文件加载动态任务（启动时恢复） */
+  private loadDynamicTasks(): void {
+    try {
+      const filePath = this.getDynamicTasksFilePath();
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const tasks: RecurringTaskDef[] = JSON.parse(content);
+        for (const task of tasks) {
+          this.dynamicTasks.set(task.id, task);
+          // 恢复 cron 解析器
+          if (task.enabled) {
+            try {
+              this.cronParsers.set(task.id, new CronParser(task.schedule));
+            } catch (err) {
+              this.logger.error(`恢复动态任务 cron 解析失败 [${task.id}]: ${(err as Error).message}`);
+            }
+          }
+        }
+        this.logger.info(`已恢复 ${tasks.length} 个动态定时任务`);
+      }
+    } catch (err) {
+      this.logger.debug('加载动态任务失败（忽略）', (err as Error).message);
+      this.dynamicTasks.clear();
+    }
+  }
+
+  /** 保存动态任务到文件 */
+  private saveDynamicTasks(): void {
+    try {
+      const filePath = this.getDynamicTasksFilePath();
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const tasks = Array.from(this.dynamicTasks.values());
+      fs.writeFileSync(filePath, JSON.stringify(tasks, null, 2), 'utf-8');
+    } catch (err) {
+      this.logger.error('保存动态任务失败', (err as Error).message);
+    }
+  }
+
   /**
    * 清理资源
    */
   dispose(): void {
     this.stop();
     this.saveHistory();
+    this.saveDynamicTasks();
   }
 }
