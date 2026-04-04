@@ -23,6 +23,45 @@ function levelIndex(level: PermissionLevel): number {
   return LEVEL_ORDER.indexOf(level);
 }
 
+/**
+ * 根据文件扩展名猜测文件类型
+ */
+function guessFileType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
+  const videoExts = ['.mp4', '.webm', '.avi', '.mov', '.mkv'];
+  const audioExts = ['.mp3', '.wav', '.ogg', '.flac'];
+  const docExts = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv'];
+
+  if (imageExts.includes(ext)) return 'image';
+  if (videoExts.includes(ext)) return 'video';
+  if (audioExts.includes(ext)) return 'audio';
+  if (docExts.includes(ext)) return 'document';
+  return 'file';
+}
+
+/**
+ * 在本地媒体目录中查找文件（支持精确匹配和模糊匹配）
+ */
+function findLocalFile(dir: string, fileName: string): { name: string; type: string; url: string } | null {
+  if (!fs.existsSync(dir)) return null;
+
+  try {
+    const entries = fs.readdirSync(dir);
+    // 精确匹配
+    const exact = entries.find(e => e === fileName);
+    if (exact) {
+      return { name: exact, type: guessFileType(exact), url: `file://${path.join(dir, exact)}` };
+    }
+    // 模糊匹配（包含文件名）
+    const fuzzy = entries.find(e => e.includes(fileName) || fileName.includes(path.parse(e).name));
+    if (fuzzy) {
+      return { name: fuzzy, type: guessFileType(fuzzy), url: `file://${path.join(dir, fuzzy)}` };
+    }
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
 export class ToolRegistry {
   private logger = createLogger('ToolRegistry');
   private tools = new Map<string, ToolDefinition>();
@@ -417,7 +456,7 @@ async function executeWriteFile(params: any, context: any): Promise<ToolResult> 
  * 创建内置工具注册表（带执行器）
  * @param platformUrl 平台 API 地址（用于 send_file 等平台工具）
  */
-export function createDefaultToolRegistry(platformUrl?: string): ToolRegistry {
+export function createDefaultToolRegistry(platformUrl?: string, mediaDir?: string): ToolRegistry {
   const registry = new ToolRegistry();
 
   const builtinTools: ToolDefinition[] = [
@@ -618,11 +657,12 @@ export function createDefaultToolRegistry(platformUrl?: string): ToolRegistry {
   registry.register(webCliDescribeTool);
   logger.info('已注册 web_cli_describe 命令发现工具');
 
-  // 注册 send_file 平台工具（发送媒体文件给用户）
-  if (platformUrl) {
+  // 注册 send_file 和 list_files 工具（需要平台连接或本地媒体目录）
+  const hasPlatformOrLocal = platformUrl || mediaDir;
+  if (hasPlatformOrLocal) {
     const sendFileTool: ToolDefinition = {
       name: 'send_file',
-      description: '向用户发送媒体文件（图片、视频等）。需要先通过 list_files 获取可用文件列表，然后用文件名发送。文件来源于塘主在控制台上传的媒体资料库。',
+      description: '向用户发送媒体文件（图片、视频等）。需要先通过 list_files 获取可用文件列表，然后用文件名发送。文件来源于塘主上传的媒体资料库。',
       requiredLevel: 'limited',
       parameters: {
         type: 'object',
@@ -664,16 +704,43 @@ export function createDefaultToolRegistry(platformUrl?: string): ToolRegistry {
           if (!botId) {
             return { toolCallId, success: false, content: '无法获取当前虾的 Bot ID', error: 'no_bot_id' };
           }
-          // 获取文件列表找到匹配的文件
-          const listRes = await fetch(`${platformUrl}/api/shrimp/${botId}/media`);
-          const listData: any = await listRes.json();
-          const file = (listData.files || []).find((f: any) => f.name === file_name || f.name.includes(file_name));
-          if (!file) {
+          
+          // 获取文件信息（优先本地 mediaDir，其次平台 API）
+          let fileUrl = '';
+          let fileType = 'file';
+          
+          // 尝试从本地媒体目录查找
+          if (mediaDir && fs.existsSync(mediaDir)) {
+            const localFile = findLocalFile(mediaDir, file_name);
+            if (localFile) {
+              // 本地文件需要上传到平台才能发送（本地部署场景）
+              if (!platformUrl) {
+                return { toolCallId, success: false, content: '本地部署模式下需要配置平台 API 地址才能发送文件', error: 'no_platform' };
+              }
+              fileUrl = localFile.url || '';
+              fileType = localFile.type || guessFileType(localFile.name);
+            }
+          }
+          
+          // 从平台 API 获取文件
+          if (!fileUrl && platformUrl) {
+            const listRes = await fetch(`${platformUrl}/api/shrimp/${botId}/media`);
+            const listData: any = await listRes.json();
+            const file = (listData.files || []).find((f: any) => f.name === file_name || f.name.includes(file_name));
+            if (!file) {
+              return { toolCallId, success: false, content: `未找到文件 "${file_name}"，请先用 list_files 查看可用文件`, error: 'file_not_found' };
+            }
+            fileUrl = file.url;
+            fileType = file.type || 'file';
+          }
+          
+          if (!fileUrl) {
             return { toolCallId, success: false, content: `未找到文件 "${file_name}"，请先用 list_files 查看可用文件`, error: 'file_not_found' };
           }
+          
           // 发送带媒体链接的私信
           const textPart = message ? `${message}\n` : '';
-          const fullContent = textPart + `[media:${file.type || 'file'}]${file.url}[/media]`;
+          const fullContent = textPart + `[media:${fileType}]${fileUrl}[/media]`;
           
           const sendRes = await fetch(`${platformUrl}/api/private-messages`, {
             method: 'POST',
@@ -687,7 +754,7 @@ export function createDefaultToolRegistry(platformUrl?: string): ToolRegistry {
           });
           const sendData: any = await sendRes.json();
           if (sendData.success) {
-            return { toolCallId, success: true, content: `文件 "${file.name}" 已发送给用户 ${receiver_id}` };
+            return { toolCallId, success: true, content: `文件 "${file_name}" 已发送给用户 ${receiver_id}` };
           } else {
             return { toolCallId, success: false, content: `发送失败: ${sendData.error}`, error: 'send_failed' };
           }
@@ -697,12 +764,12 @@ export function createDefaultToolRegistry(platformUrl?: string): ToolRegistry {
       }) as ToolExecutorFn,
     };
     registry.register(sendFileTool);
-    logger.info('已注册 send_file 平台工具');
+    logger.info('已注册 send_file 工具');
 
     // 注册 list_files 平台工具（列出可发送的文件）
     const listFilesTool: ToolDefinition = {
       name: 'list_files',
-      description: '列出塘主在控制台上传的媒体资料库中的所有可用文件（图片、视频等）。返回文件名、类型和大小。',
+      description: '列出媒体资料库中的所有可用文件（图片、视频等）。返回文件名、类型和大小。',
       requiredLevel: 'read_only',
       parameters: {
         type: 'object',
@@ -722,27 +789,63 @@ export function createDefaultToolRegistry(platformUrl?: string): ToolRegistry {
               }
             } catch (e) { /* ignore */ }
           }
-          if (!botId) {
-            return { toolCallId, success: false, content: '无法获取当前虾的 Bot ID', error: 'no_bot_id' };
+          
+          // 收集所有可用文件
+          const allFiles: Array<{name: string; type: string; size: string; source: string}> = [];
+          
+          // 1. 从本地媒体目录列出文件
+          if (mediaDir && fs.existsSync(mediaDir)) {
+            try {
+              const entries = fs.readdirSync(mediaDir);
+              for (const entry of entries) {
+                const fullPath = path.join(mediaDir, entry);
+                const stat = fs.statSync(fullPath);
+                if (stat.isFile()) {
+                  const sizeStr = stat.size > 1024 * 1024 ? `${(stat.size / 1024 / 1024).toFixed(1)}MB` : `${(stat.size / 1024).toFixed(0)}KB`;
+                  allFiles.push({
+                    name: entry,
+                    type: guessFileType(entry),
+                    size: sizeStr,
+                    source: '本地',
+                  });
+                }
+              }
+            } catch (e) { /* ignore dir read errors */ }
           }
-          const res = await fetch(`${platformUrl}/api/shrimp/${botId}/media`);
-          const data: any = await res.json();
-          const files: any[] = data.files || [];
-          if (files.length === 0) {
-            return { toolCallId, success: true, content: '媒体资料库为空，没有可发送的文件。' };
+          
+          // 2. 从平台 API 列出文件
+          if (platformUrl && botId) {
+            try {
+              const res = await fetch(`${platformUrl}/api/shrimp/${botId}/media`);
+              const data: any = await res.json();
+              const files: any[] = data.files || [];
+              for (const f of files) {
+                const sizeStr = f.size > 1024 * 1024 ? `${(f.size / 1024 / 1024).toFixed(1)}MB` : `${(f.size / 1024).toFixed(0)}KB`;
+                allFiles.push({
+                  name: f.name,
+                  type: f.type || '未知',
+                  size: sizeStr,
+                  source: '云端',
+                });
+              }
+            } catch (e) { /* ignore network errors */ }
           }
-          const fileList = files.map((f: any, i: number) => {
-            const sizeStr = f.size > 1024 * 1024 ? `${(f.size / 1024 / 1024).toFixed(1)}MB` : `${(f.size / 1024).toFixed(0)}KB`;
-            return `${i + 1}. ${f.name} (${f.type || '未知'}, ${sizeStr})`;
+          
+          if (allFiles.length === 0) {
+            return { toolCallId, success: true, content: '媒体资料库为空，没有可发送的文件。塘主可通过控制台或本地媒体目录添加文件。' };
+          }
+          
+          const fileList = allFiles.map((f, i) => {
+            return `${i + 1}. ${f.name} (${f.type}, ${f.size}) [${f.source}]`;
           }).join('\n');
-          return { toolCallId, success: true, content: `可用文件列表（共 ${files.length} 个）：\n\n${fileList}\n\n使用 send_file 工具发送文件时，file_name 参数填写完整的文件名。` };
+          return { toolCallId, success: true, content: `可用文件列表（共 ${allFiles.length} 个）：\n\n${fileList}\n\n使用 send_file 工具发送文件时，file_name 参数填写完整的文件名。` };
         } catch (err) {
           return { toolCallId, success: false, content: `获取文件列表失败: ${(err as Error).message}`, error: (err as Error).message };
         }
       }) as ToolExecutorFn,
     };
     registry.register(listFilesTool);
-    logger.info('已注册 list_files 平台工具');
+    logger.info(`已注册 list_files 工具 (mediaDir: ${mediaDir || '未配置'}, platform: ${platformUrl || '未配置'})`);
   }
 
   return registry;

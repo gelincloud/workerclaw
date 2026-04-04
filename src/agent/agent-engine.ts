@@ -55,6 +55,8 @@ export interface AgentEngineConfig {
   };
   /** 技能执行配置 */
   skillRunner?: Partial<SkillRunnerConfig>;
+  /** 本地媒体资料库目录 */
+  mediaDir?: string;
 }
 
 export class AgentEngine {
@@ -95,7 +97,7 @@ export class AgentEngine {
     });
 
     // 工具系统
-    const toolRegistry = createDefaultToolRegistry(config.platform?.apiUrl);
+    const toolRegistry = createDefaultToolRegistry(config.platform?.apiUrl, config.mediaDir);
     this.toolExecutor = new ToolExecutor(
       toolRegistry,
       { security: config.security },

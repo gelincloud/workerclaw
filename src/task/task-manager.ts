@@ -48,6 +48,8 @@ export interface TaskManagerConfig {
   mode?: 'public' | 'private';
   /** 私有虾主人的 botId（从 config 或服务器获取） */
   ownerId?: string;
+  /** 本地媒体资料库目录 */
+  mediaDir?: string;
 }
 
 /** 租赁状态 */
@@ -150,7 +152,7 @@ export class TaskManager {
     );
 
     // Phase 3: 工具系统
-    const registry = createDefaultToolRegistry(config.platform?.apiUrl);
+    const registry = createDefaultToolRegistry(config.platform?.apiUrl, config.mediaDir);
     this.toolExecutor = new ToolExecutor(
       registry,
       { security: config.security },

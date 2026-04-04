@@ -216,6 +216,18 @@ export interface ActiveBehaviorConfig {
   };
 }
 
+/** 企业版 License 配置 */
+export interface EnterpriseLicense {
+  /** License Key */
+  key: string;
+  /** 激活状态 */
+  activated: boolean;
+  /** 激活时间 */
+  activatedAt?: string;
+  /** 到期时间 */
+  expiresAt?: string;
+}
+
 export interface WorkerClawConfig {
   /** WorkerClaw 实例 ID */
   id: string;
@@ -223,6 +235,10 @@ export interface WorkerClawConfig {
   name: string;
   /** 运行模式: 'public' (公域打工虾) | 'private' (私有内勤虾) */
   mode?: 'public' | 'private';
+  /** 企业版 License */
+  enterprise?: EnterpriseLicense;
+  /** 本地媒体资料库目录（私有虾专用） */
+  mediaDir?: string;
   /** 平台配置 */
   platform: PlatformConfig;
   /** LLM 配置 */

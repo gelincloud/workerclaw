@@ -47,10 +47,11 @@ if [ -f "$CONFIG_FILE" ]; then
   echo "   3) 修改 LLM 配置（主端点 + 多端点管理）"
   echo "   4) 仅修改 LLM API Key"
   echo "   5) 仅修改平台地址"
-  echo "   6) 保持现有配置，跳过"
+  echo "   6) 🏢 企业版配置（模式切换/License/知识/媒体库）"
+  echo "   7) 保持现有配置，跳过"
   echo ""
-  read -p "   请选择 [6]: " config_choice
-  config_choice="${config_choice:-6}"
+  read -p "   请选择 [7]: " config_choice
+  config_choice="${config_choice:-7}"
 
   case "$config_choice" in
     2)
@@ -358,6 +359,187 @@ print('   WS:  ${new_ws_url}')
       exit 0
       ;;
     6)
+      # ========== 企业版配置 ==========
+      MODE_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('mode','public'))" 2>/dev/null)
+      LIC_STATUS=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); e=d.get('enterprise',{}); print('已激活' if e.get('activated') else '未激活')" 2>/dev/null)
+      KNOWLEDGE_LEN=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); k=d.get('personality',{}).get('customSystemPrompt',''); print(f'{len(k)}字符' if k else '未设置')" 2>/dev/null)
+      MEDIA_DIR_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('mediaDir','未设置'))" 2>/dev/null)
+      echo ""
+      echo "   ── 企业版配置 ──"
+      echo "   当前模式: $MODE_CUR"
+      echo "   License:  $LIC_STATUS"
+      echo "   专属知识: $KNOWLEDGE_LEN"
+      echo "   媒体库:   $MEDIA_DIR_CUR"
+      echo ""
+      echo "   6a) 切换运行模式（公有打工虾 ↔ 私有虾）"
+      echo "   6b) 激活企业版 License"
+      echo "   6c) 配置专属知识"
+      echo "   6d) 配置媒体资料库目录"
+      echo "   6e) 返回上级"
+      read -p "   请选择: " ent_choice
+
+      case "$ent_choice" in
+        6a)
+          echo ""
+          echo "   当前模式: $MODE_CUR"
+          echo "   🌐 公有打工虾：接平台任务，智能活跃，公域社交"
+          echo "   🔒 私有虾：专属知识库、媒体资料库，服务特定企业/个人"
+          echo ""
+          read -p "   新模式 (public/private) [$MODE_CUR]: " new_mode
+          new_mode="${new_mode:-$MODE_CUR}"
+          if [ "$new_mode" != "public" ] && [ "$new_mode" != "private" ]; then
+            echo "   ❌ 无效模式，请输入 public 或 private"
+          else
+            if [ "$new_mode" = "private" ]; then
+              ENT_ACT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('enterprise',{}).get('activated',False))" 2>/dev/null)
+              if [ "$ENT_ACT" != "True" ]; then
+                echo "   ⚠️  私有虾模式需要企业版 License"
+                echo "   📋 购买: https://www.miniabc.top/enterprise.html"
+                echo ""
+                read -p "   是否现在输入 License Key？[y/N]: " do_activate
+                if [ "$do_activate" = "y" ] || [ "$do_activate" = "Y" ]; then
+                  read -p "   输入 License Key: " lic_key
+                  if [ -n "$lic_key" ]; then
+                    API_URL_ENT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('apiUrl','https://www.miniabc.top'))" 2>/dev/null)
+                    LIC_RESULT=$(curl -s --max-time 15 "${API_URL_ENT}/api/license/verify" \
+                      -H "Content-Type: application/json" \
+                      -d "{\"licenseKey\":\"${lic_key}\"}" 2>&1)
+                    LIC_VALID=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('1' if d.get('success') and d.get('valid') else '0')" 2>/dev/null)
+                    if [ "$LIC_VALID" = "1" ]; then
+                      LIC_EXPIRES=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('expiresAt',''))" 2>/dev/null)
+                      python3 -c "
+import json, datetime
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('enterprise', {})['key'] = '${lic_key}'
+c['enterprise']['activated'] = True
+c['enterprise']['activatedAt'] = datetime.datetime.now().isoformat()
+c['enterprise']['expiresAt'] = '${LIC_EXPIRES}'
+c['mode'] = 'private'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ License 已激活，已切换到私有虾模式')
+" 2>/dev/null
+                    else
+                      echo "   ❌ License 验证失败: ${LIC_RESULT:0:100}"
+                    fi
+                  fi
+                else
+                  echo "   已取消模式切换"
+                fi
+                echo ""
+                echo "   重启容器生效: docker compose restart"
+                exit 0
+              fi
+            fi
+            python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c['mode'] = '${new_mode}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 运行模式已切换为: ${new_mode}')
+" 2>/dev/null
+          fi
+          ;;
+        6b)
+          echo ""
+          echo "   📋 购买企业版 License: https://www.miniabc.top/enterprise.html"
+          echo ""
+          read -p "   输入 License Key: " lic_key
+          if [ -z "$lic_key" ]; then
+            echo "   已取消"
+          else
+            API_URL_ENT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('apiUrl','https://www.miniabc.top'))" 2>/dev/null)
+            LIC_RESULT=$(curl -s --max-time 15 "${API_URL_ENT}/api/license/verify" \
+              -H "Content-Type: application/json" \
+              -d "{\"licenseKey\":\"${lic_key}\"}" 2>&1)
+            LIC_VALID=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('1' if d.get('success') and d.get('valid') else '0')" 2>/dev/null)
+            if [ "$LIC_VALID" = "1" ]; then
+              LIC_EXPIRES=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('expiresAt',''))" 2>/dev/null)
+              LIC_PLAN=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('plan',''))" 2>/dev/null)
+              python3 -c "
+import json, datetime
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('enterprise', {})['key'] = '${lic_key}'
+c['enterprise']['activated'] = True
+c['enterprise']['activatedAt'] = datetime.datetime.now().isoformat()
+c['enterprise']['expiresAt'] = '${LIC_EXPIRES}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ License 已激活')
+" 2>/dev/null
+              if [ -n "$LIC_EXPIRES" ]; then echo "   📅 到期: $LIC_EXPIRES"; fi
+            else
+              echo "   ❌ License 验证失败: ${LIC_RESULT:0:100}"
+            fi
+          fi
+          ;;
+        6c)
+          echo ""
+          echo "   专属知识会被注入到系统提示中，作为 ## 附加指引"
+          echo "   适合填写：企业介绍、产品信息、客服话术、FAQ 等"
+          echo ""
+          echo "   输入专属知识内容（输入 END 结束）："
+          KNOWLEDGE_INPUT=""
+          while IFS= read -r line; do
+            [ "$line" = "END" ] && break
+            KNOWLEDGE_INPUT="${KNOWLEDGE_INPUT}${line}
+"
+          done
+          if [ -n "$KNOWLEDGE_INPUT" ]; then
+            # 使用 python3 正确处理多行文本中的引号
+            python3 << 'PYEOF'
+import json
+cfg_path = '$CONFIG_FILE'
+knowledge = """$KNOWLEDGE_INPUT"""
+# 正确读取配置
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('personality', {})['customSystemPrompt'] = knowledge.rstrip('\n')
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print(f'✅ 专属知识已设置 ({len(knowledge.rstrip())} 字符)')
+PYEOF
+          else
+            echo "   未输入内容"
+          fi
+          ;;
+        6d)
+          echo ""
+          echo "   媒体资料库用于存放虾可以发送给用户的图片、视频、文档等文件"
+          MEDIA_DIR_NEW=$(python3 -c "import json,os; d=json.load(open('$CONFIG_FILE')); print(d.get('mediaDir',os.path.expanduser('~/.workerclaw/media')))" 2>/dev/null)
+          read -p "   媒体资料库目录 [$MEDIA_DIR_NEW]: " media_dir_input
+          media_dir_input="${media_dir_input:-$MEDIA_DIR_NEW}"
+          mkdir -p "$media_dir_input"
+          python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c['mediaDir'] = '${media_dir_input}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 媒体资料库目录已设置为: ${media_dir_input}')
+" 2>/dev/null
+          ;;
+        6e)
+          echo "   返回上级"
+          ;;
+        *)
+          echo "   无效选择"
+          ;;
+      esac
+      echo ""
+      echo "   重启容器生效: docker compose restart"
+      exit 0
+      ;;
+    7)
       echo "保持现有配置，跳过。"
       exit 0
       ;;
