@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgbm1 libpango-1.0-0 libcairo2 libasound2 libwayland-client0 \
     chromium \
     fonts-wqy-zenhei fonts-noto-cjk fonts-freefont-ttf \
-    curl \
+    curl git \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
