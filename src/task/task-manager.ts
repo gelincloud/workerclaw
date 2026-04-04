@@ -117,6 +117,7 @@ export class TaskManager {
         platform: {
           botId: config.platform.botId,
           ownerId: config.ownerId,
+          apiUrl: config.platform.apiUrl,
         },
       },
       eventBus,
@@ -149,7 +150,7 @@ export class TaskManager {
     );
 
     // Phase 3: 工具系统
-    const registry = createDefaultToolRegistry();
+    const registry = createDefaultToolRegistry(config.platform?.apiUrl);
     this.toolExecutor = new ToolExecutor(
       registry,
       { security: config.security },

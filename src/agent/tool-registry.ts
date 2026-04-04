@@ -415,8 +415,9 @@ async function executeWriteFile(params: any, context: any): Promise<ToolResult> 
 
 /**
  * 创建内置工具注册表（带执行器）
+ * @param platformUrl 平台 API 地址（用于 send_file 等平台工具）
  */
-export function createDefaultToolRegistry(): ToolRegistry {
+export function createDefaultToolRegistry(platformUrl?: string): ToolRegistry {
   const registry = new ToolRegistry();
 
   const builtinTools: ToolDefinition[] = [
@@ -616,6 +617,133 @@ export function createDefaultToolRegistry(): ToolRegistry {
   const webCliDescribeTool = getWebCliDescribeToolDefinition();
   registry.register(webCliDescribeTool);
   logger.info('已注册 web_cli_describe 命令发现工具');
+
+  // 注册 send_file 平台工具（发送媒体文件给用户）
+  if (platformUrl) {
+    const sendFileTool: ToolDefinition = {
+      name: 'send_file',
+      description: '向用户发送媒体文件（图片、视频等）。需要先通过 list_files 获取可用文件列表，然后用文件名发送。文件来源于塘主在控制台上传的媒体资料库。',
+      requiredLevel: 'limited',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_name: {
+            type: 'string',
+            description: '要发送的文件名（从 list_files 获取的文件名中选择）',
+          },
+          receiver_id: {
+            type: 'string',
+            description: '接收文件的对方用户ID',
+          },
+          message: {
+            type: 'string',
+            description: '附带在文件旁边的文字说明（可选）',
+          },
+        },
+        required: ['file_name', 'receiver_id'],
+      },
+      executor: (async (params: any, context: any): Promise<ToolResult> => {
+        const toolCallId = context?.toolCallId || 'send_file';
+        const { file_name, receiver_id, message } = params;
+        if (!file_name || !receiver_id) {
+          return { toolCallId, success: false, content: '缺少 file_name 或 receiver_id', error: 'missing_params' };
+        }
+        try {
+          // 从本地配置文件读取 botId
+          let botId = process.env.OPENCLAW_BOT_ID || '';
+          if (!botId) {
+            try {
+              const homeDir = process.env.HOME || '/root';
+              const cfgPath = path.join(homeDir, '.workerclaw', 'config.json');
+              if (fs.existsSync(cfgPath)) {
+                const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+                botId = cfg.platform?.botId || '';
+              }
+            } catch (e) { /* ignore */ }
+          }
+          if (!botId) {
+            return { toolCallId, success: false, content: '无法获取当前虾的 Bot ID', error: 'no_bot_id' };
+          }
+          // 获取文件列表找到匹配的文件
+          const listRes = await fetch(`${platformUrl}/api/shrimp/${botId}/media`);
+          const listData: any = await listRes.json();
+          const file = (listData.files || []).find((f: any) => f.name === file_name || f.name.includes(file_name));
+          if (!file) {
+            return { toolCallId, success: false, content: `未找到文件 "${file_name}"，请先用 list_files 查看可用文件`, error: 'file_not_found' };
+          }
+          // 发送带媒体链接的私信
+          const textPart = message ? `${message}\n` : '';
+          const fullContent = textPart + `[media:${file.type || 'file'}]${file.url}[/media]`;
+          
+          const sendRes = await fetch(`${platformUrl}/api/private-messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              senderId: botId,
+              receiverId: receiver_id,
+              content: fullContent,
+              messageType: 'media'
+            })
+          });
+          const sendData: any = await sendRes.json();
+          if (sendData.success) {
+            return { toolCallId, success: true, content: `文件 "${file.name}" 已发送给用户 ${receiver_id}` };
+          } else {
+            return { toolCallId, success: false, content: `发送失败: ${sendData.error}`, error: 'send_failed' };
+          }
+        } catch (err) {
+          return { toolCallId, success: false, content: `发送文件失败: ${(err as Error).message}`, error: (err as Error).message };
+        }
+      }) as ToolExecutorFn,
+    };
+    registry.register(sendFileTool);
+    logger.info('已注册 send_file 平台工具');
+
+    // 注册 list_files 平台工具（列出可发送的文件）
+    const listFilesTool: ToolDefinition = {
+      name: 'list_files',
+      description: '列出塘主在控制台上传的媒体资料库中的所有可用文件（图片、视频等）。返回文件名、类型和大小。',
+      requiredLevel: 'read_only',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+      executor: (async (params: any, context: any): Promise<ToolResult> => {
+        const toolCallId = context?.toolCallId || 'list_files';
+        try {
+          let botId = process.env.OPENCLAW_BOT_ID || '';
+          if (!botId) {
+            try {
+              const homeDir = process.env.HOME || '/root';
+              const cfgPath = path.join(homeDir, '.workerclaw', 'config.json');
+              if (fs.existsSync(cfgPath)) {
+                const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+                botId = cfg.platform?.botId || '';
+              }
+            } catch (e) { /* ignore */ }
+          }
+          if (!botId) {
+            return { toolCallId, success: false, content: '无法获取当前虾的 Bot ID', error: 'no_bot_id' };
+          }
+          const res = await fetch(`${platformUrl}/api/shrimp/${botId}/media`);
+          const data: any = await res.json();
+          const files: any[] = data.files || [];
+          if (files.length === 0) {
+            return { toolCallId, success: true, content: '媒体资料库为空，没有可发送的文件。' };
+          }
+          const fileList = files.map((f: any, i: number) => {
+            const sizeStr = f.size > 1024 * 1024 ? `${(f.size / 1024 / 1024).toFixed(1)}MB` : `${(f.size / 1024).toFixed(0)}KB`;
+            return `${i + 1}. ${f.name} (${f.type || '未知'}, ${sizeStr})`;
+          }).join('\n');
+          return { toolCallId, success: true, content: `可用文件列表（共 ${files.length} 个）：\n\n${fileList}\n\n使用 send_file 工具发送文件时，file_name 参数填写完整的文件名。` };
+        } catch (err) {
+          return { toolCallId, success: false, content: `获取文件列表失败: ${(err as Error).message}`, error: (err as Error).message };
+        }
+      }) as ToolExecutorFn,
+    };
+    registry.register(listFilesTool);
+    logger.info('已注册 list_files 平台工具');
+  }
 
   return registry;
 }

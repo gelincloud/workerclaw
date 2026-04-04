@@ -33,6 +33,7 @@ import type {
 import type { PersonalityConfig } from './personality.js';
 import type { ExperienceManager } from '../experience/index.js';
 import type { ExperienceSearchResult } from '../experience/types.js';
+import type { ToolDefinition } from '../types/agent.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -44,6 +45,7 @@ export interface AgentEngineConfig {
   platform?: {
     botId?: string;
     ownerId?: string;
+    apiUrl?: string;
   };
   /** 会话管理配置 */
   session?: {
@@ -93,7 +95,7 @@ export class AgentEngine {
     });
 
     // 工具系统
-    const toolRegistry = createDefaultToolRegistry();
+    const toolRegistry = createDefaultToolRegistry(config.platform?.apiUrl);
     this.toolExecutor = new ToolExecutor(
       toolRegistry,
       { security: config.security },
@@ -114,6 +116,22 @@ export class AgentEngine {
     if (experienceManager) {
       this.experienceManager = experienceManager;
     }
+  }
+
+  /**
+   * 注册额外工具（供插件使用）
+   * 例如 MiniABC 插件注册 send_file 工具
+   */
+  registerTool(tool: ToolDefinition): void {
+    this.toolExecutor.getRegistry().register(tool);
+    this.logger.info(`外部工具已注册: ${tool.name}`);
+  }
+
+  /**
+   * 获取工具注册表引用（供插件直接操作）
+   */
+  getToolRegistry(): ToolRegistry {
+    return (this.toolExecutor as any).registry as ToolRegistry;
   }
 
   /**
