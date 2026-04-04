@@ -152,7 +152,10 @@ export class WorkerClaw {
 
     try {
       // Phase 4: 注册内置技能
-      const builtinSkills = getBuiltinSkills(this.config.security.sandbox.browser);
+      const builtinSkills = getBuiltinSkills(
+        this.config.security.sandbox.browser,
+        this.config.whatsapp,
+      );
       for (const skill of builtinSkills) {
         this.taskManager.getAgentEngine().registerSkill(skill);
       }
@@ -162,6 +165,18 @@ export class WorkerClaw {
       const { success, failed } = await this.taskManager.getAgentEngine().initializeSkills();
       if (failed > 0) {
         this.logger.warn(`${failed} 个技能初始化失败`);
+      }
+
+      // WhatsApp 技能：注入 LLM 调用函数（用于自动回复）
+      if (this.config.whatsapp?.enabled) {
+        const whatsappSkill = this.taskManager.getAgentEngine().getSkillRegistry().getSkill('whatsapp');
+        if (whatsappSkill && typeof (whatsappSkill as any).setLLMChat === 'function') {
+          (whatsappSkill as any).setLLMChat(
+            (systemPrompt: string, userMessage: string) =>
+              this.taskManager.getAgentEngine().generateReply(systemPrompt, userMessage),
+          );
+          this.logger.info('WhatsApp 自动回复已启用（LLM 已注入）');
+        }
       }
 
       // Phase 6: 初始化经验系统

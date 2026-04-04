@@ -419,7 +419,7 @@ export class AgentEngine {
     const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
 
     return {
-      content: lastAssistant?.content || '任务执行完成（达到最大工具调用轮次）',
+      content: (lastAssistant ? this.msgText(lastAssistant) : '') || '任务执行完成（达到最大工具调用轮次）',
       hasToolCalls: false,
       toolCalls: [],
       usage: undefined,
@@ -826,7 +826,7 @@ export class AgentEngine {
         // 扫描 tool 角色的消息（write_file, browser_screenshot 等）
         if (msg.role !== 'tool') continue;
 
-        const msgContent = msg.content || '';
+        const msgContent = this.msgText(msg);
 
         // 识别 write_file 工具产出的文件
         if (msg.name === 'write_file' || msgContent.includes('write_file')) {
@@ -1579,11 +1579,11 @@ export class AgentEngine {
    * 轻量回复生成（用于私信/评论回复等非任务场景）
    * 不创建会话、不走工具调用循环，直接调用 LLM 生成回复
    */
-  async generateReply(systemPrompt: string, userMessage: string): Promise<string | null> {
+  async generateReply(systemPrompt: string, userMessage: string | Array<{type: string; text?: string; image_url?: {url: string; detail?: string}}>): Promise<string | null> {
     try {
       const messages: LLMMessage[] = [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
+        { role: 'user', content: userMessage as LLMMessage['content'] },
       ];
 
       const response = await this.llm.chat({
@@ -1603,5 +1603,10 @@ export class AgentEngine {
       this.logger.error('生成回复失败', { error: (err as Error).message });
       return null;
     }
+  }
+
+  /** 安全获取消息的文本内容（兼容多模态 content） */
+  private msgText(msg: LLMMessage): string {
+    return typeof msg.content === 'string' ? msg.content : '';
   }
 }

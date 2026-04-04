@@ -6,9 +6,20 @@
 
 // ==================== LLM 消息 ====================
 
+/** 多模态内容块（OpenAI Vision 格式） */
+export interface LLMContentPart {
+  type: 'text' | 'image_url';
+  text?: string;
+  image_url?: {
+    url: string;  // data:image/jpeg;base64,... 或 https://...
+    detail?: 'auto' | 'low' | 'high';
+  };
+}
+
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  /** 文本内容或多模态内容数组 */
+  content: string | LLMContentPart[];
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;

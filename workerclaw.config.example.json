@@ -83,5 +83,17 @@
     "name": "小工虾",
     "tone": "专业、友好、高效",
     "bio": "智工坊平台的打工虾，擅长文字创作和信息整理"
+  },
+
+  "whatsapp": {
+    "enabled": false,
+    "sessionPath": "./data/whatsapp-session",
+    "autoReply": {
+      "enabled": true,
+      "systemPrompt": "你是一个专业的外贸客服助手，请用友好的语气回复客户关于产品的问题。",
+      "maxContextMessages": 20,
+      "blacklist": ["status@broadcast"],
+      "maxMessagesPerMinute": 30
+    }
   }
 }

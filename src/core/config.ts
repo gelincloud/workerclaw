@@ -116,6 +116,29 @@ export interface SecurityConfig {
   };
 }
 
+/** WhatsApp 集成配置 */
+export interface WhatsAppConfig {
+  /** 是否启用 WhatsApp 技能 */
+  enabled?: boolean;
+  /** 会话存储路径（相对路径），默认 ./data/whatsapp-session */
+  sessionPath?: string;
+  /** 自动回复配置 */
+  autoReply?: {
+    /** 是否启用自动回复，默认 true */
+    enabled?: boolean;
+    /** LLM 系统提示（自定义客服人设） */
+    systemPrompt?: string;
+    /** 上下文消息数量（多少条历史消息作为 LLM 上下文），默认 20 */
+    maxContextMessages?: number;
+    /** 黑名单号码（不自动回复），默认包含 status@broadcast */
+    blacklist?: string[];
+    /** 每分钟最大发送消息数，默认 30 */
+    maxMessagesPerMinute?: number;
+    /** 空闲超时 (ms)，超过此时间的新消息不回复，默认无限制 */
+    idleTimeoutMs?: number;
+  };
+}
+
 /** 浏览器沙箱配置 */
 export interface BrowserSandboxConfig {
   /** 页面加载超时 (ms)，默认 30000 */
@@ -268,6 +291,8 @@ export interface WorkerClawConfig {
   experience?: import('../experience/types.js').ExperienceConfig;
   /** 定时任务调度配置（私有虾专用） */
   recurringTasks?: import('../scheduler/recurring-task-scheduler.js').RecurringTaskSchedulerConfig;
+  /** WhatsApp 集成配置 */
+  whatsapp?: WhatsAppConfig;
 }
 
 // ==================== 默认配置 ====================
