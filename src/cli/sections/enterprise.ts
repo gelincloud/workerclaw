@@ -165,7 +165,15 @@ async function activateLicense(existing: any, cfgPath: string): Promise<any> {
   if (result.expiresAt) console.log(`  📅 到期: ${result.expiresAt}`);
   console.log('');
 
+  // 自动切换到私有虾模式
+  const currentMode = existing?.mode || 'public';
+  if (currentMode !== 'private') {
+    console.log('  🔒 自动切换到私有虾模式...');
+    console.log('');
+  }
+
   return {
+    mode: 'private',  // 激活成功后自动切换到私有虾
     enterprise: {
       key: licenseKey.trim().toUpperCase(),
       activated: true,
