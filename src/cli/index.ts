@@ -186,6 +186,86 @@ const main = defineCommand({
       },
     }),
 
+    // 停止命令
+    stop: defineCommand({
+      meta: {
+        name: 'stop',
+        description: '停止后台运行的 WorkerClaw 进程',
+      },
+      args: {
+        force: {
+          type: 'boolean',
+          description: '强制终止（使用 SIGKILL）',
+          alias: 'f',
+          default: false,
+        },
+      },
+      async run({ args }) {
+        const { execSync } = await import('node:child_process');
+
+        // 查找 workerclaw 进程
+        let pids: string[] = [];
+        try {
+          const output = execSync('pgrep -f "node.*workerclaw"', { encoding: 'utf-8' }).trim();
+          if (output) {
+            pids = output.split('\n').filter(Boolean);
+          }
+        } catch {
+          // pgrep 没找到进程会返回非零退出码
+        }
+
+        if (pids.length === 0) {
+          console.log('✅ 没有找到运行中的 WorkerClaw 进程');
+          return;
+        }
+
+        console.log(`🔍 找到 ${pids.length} 个 WorkerClaw 进程:`);
+
+        // 显示进程详情
+        for (const pid of pids) {
+          try {
+            const info = execSync(`ps -p ${pid} -o pid,ppid,args`, { encoding: 'utf-8' }).trim();
+            console.log(`   ${info.split('\n')[1]?.trim() || `PID: ${pid}`}`);
+          } catch {
+            console.log(`   PID: ${pid}`);
+          }
+        }
+
+        const signal = args.force ? 'SIGKILL' : 'SIGTERM';
+        const signalName = args.force ? 'SIGKILL (强制)' : 'SIGTERM (优雅)';
+
+        console.log(`\n🛑 正在发送 ${signalName} 信号...`);
+
+        for (const pid of pids) {
+          try {
+            process.kill(Number(pid), signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM');
+            console.log(`   ✅ 已向 PID ${pid} 发送信号`);
+          } catch (err: any) {
+            console.log(`   ❌ 无法终止 PID ${pid}: ${err.message}`);
+          }
+        }
+
+        // 等待一下确认进程已终止
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // 检查是否还有残留进程
+        let remainingPids: string[] = [];
+        try {
+          const output = execSync('pgrep -f "node.*workerclaw"', { encoding: 'utf-8' }).trim();
+          if (output) {
+            remainingPids = output.split('\n').filter(Boolean);
+          }
+        } catch {}
+
+        if (remainingPids.length === 0) {
+          console.log('\n✅ 所有 WorkerClaw 进程已停止');
+        } else {
+          console.log(`\n⚠️  仍有 ${remainingPids.length} 个进程在运行，可能需要强制终止:`);
+          console.log('   workerclaw stop --force');
+        }
+      },
+    }),
+
     // 状态命令
     status: defineCommand({
       meta: {
@@ -529,7 +609,7 @@ const main = defineCommand({
   // 默认行为：如果没有子命令，显示帮助
   async run({ rawArgs }) {
     // citty 会先执行子命令再执行主命令 run，需要检测是否已有子命令被处理
-    const knownSubCommands = ['configure', 'start', 'status', 'token', 'logs', 'skills', 'experience', 'tasks'];
+    const knownSubCommands = ['configure', 'start', 'stop', 'status', 'token', 'logs', 'skills', 'experience', 'tasks'];
     if (rawArgs.length > 0 && knownSubCommands.includes(rawArgs[0])) {
       return; // 子命令已处理，不再输出帮助
     }
@@ -538,6 +618,7 @@ const main = defineCommand({
     console.log('用法:');
     console.log('  workerclaw configure              交互式配置向导');
     console.log('  workerclaw start                  启动 WorkerClaw');
+    console.log('  workerclaw stop [-f|--force]      停止后台进程');
     console.log('  workerclaw status                 查看状态');
     console.log('  workerclaw token                  查看 Token（网页登录用）');
     console.log('  workerclaw logs [-f] [-n N]       查看运行日志');
