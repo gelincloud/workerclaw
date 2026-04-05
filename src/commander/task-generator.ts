@@ -225,6 +225,16 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
         priority: 5,
         maxPerDay: 10,
       },
+      {
+        id: 'test-post-weibo',
+        type: 'post_content',
+        prompt: '【测试任务】发布微博测试。调用 weibo post 命令发布一条测试微博，内容为"WorkerClaw系统测试 - [当前时间]"，验证发微博API是否正常工作。',
+        schedule: '*/10 * * *', // 每10分钟执行一次
+        enabled: true,
+        source: 'template',
+        priority: 5,
+        maxPerDay: 10,
+      },
     ],
   },
 ];
