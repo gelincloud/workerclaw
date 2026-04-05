@@ -288,15 +288,24 @@ export class RecurringTaskScheduler {
    * 调度 tick
    */
   private async tick(): Promise<void> {
-    if (this.isExecuting || !this.isRunning) return;
+    if (this.isExecuting || !this.isRunning) {
+      if (this.isExecuting) {
+        this.logger.debug('调度检查跳过：有任务正在执行');
+      }
+      return;
+    }
 
     const now = new Date();
     const currentMinuteKey = `${now.getHours()}:${now.getMinutes()}`;
+    this.logger.debug(`调度检查: ${currentMinuteKey}, 任务数: ${this.getAllTasks().filter(t => t.enabled).length}`);
 
     const allTasks = this.getAllTasks().filter(t => t.enabled);
     for (const task of allTasks) {
       const parser = this.cronParsers.get(task.id);
-      if (!parser) continue;
+      if (!parser) {
+        this.logger.warn(`任务 ${task.id} 没有 cron 解析器`);
+        continue;
+      }
 
       // 频率限制检查
       if (!this.checkFrequency(task)) continue;
@@ -306,7 +315,12 @@ export class RecurringTaskScheduler {
       if (this.lastTriggerMinute.has(triggerKey)) continue;
 
       // Cron 匹配检查
-      if (!parser.matches(now)) continue;
+      if (!parser.matches(now)) {
+        this.logger.debug(`任务 ${task.id} 不匹配当前时间`);
+        continue;
+      }
+
+      this.logger.info(`⏰ 任务 ${task.id} 匹配当前时间，准备执行`);
 
       // 标记已触发
       this.lastTriggerMinute.add(triggerKey);
@@ -322,10 +336,15 @@ export class RecurringTaskScheduler {
 
       // 执行任务
       this.isExecuting = true;
+      const startTime = Date.now();
       try {
         await this.executeRecurringTask(task);
+      } catch (err) {
+        this.logger.error(`任务 ${task.id} 执行异常`, (err as Error).message);
       } finally {
         this.isExecuting = false;
+        const duration = Date.now() - startTime;
+        this.logger.info(`任务 ${task.id} 执行完成，耗时 ${(duration / 1000).toFixed(1)}s`);
       }
     }
   }
