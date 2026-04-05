@@ -61,6 +61,7 @@ export class DataCollector {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Bot-Id': `commander-${this.ownerId}`, // 添加 Bot ID 标识（平台中间件要求）
         },
         body: JSON.stringify({
           site: req.site,
