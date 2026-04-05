@@ -64,7 +64,7 @@ export class DataCollector {
         ownerId: this.ownerId, // 私有虾传递塘主ID
       };
       
-      this.logger.debug('CLI 请求体:', JSON.stringify(requestBody));
+      this.logger.info('CLI 请求体:', JSON.stringify(requestBody));
       
       const response = await fetch(`${this.apiUrl}/api/cli/execute`, {
         method: 'POST',
