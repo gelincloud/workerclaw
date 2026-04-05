@@ -57,19 +57,30 @@ export class DataCollector {
    */
   private async callCli<T>(req: CliRequest): Promise<T | null> {
     try {
+      const requestBody = {
+        site: req.site,
+        command: req.command,
+        args: req.args || {},
+        ownerId: this.ownerId, // 私有虾传递塘主ID
+      };
+      
+      this.logger.debug('CLI 请求体:', JSON.stringify(requestBody));
+      
       const response = await fetch(`${this.apiUrl}/api/cli/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Bot-Id': `commander-${this.ownerId}`, // 添加 Bot ID 标识（平台中间件要求）
         },
-        body: JSON.stringify({
-          site: req.site,
-          command: req.command,
-          args: req.args || {},
-          ownerId: this.ownerId, // 私有虾传递塘主ID
-        }),
+        body: JSON.stringify(requestBody),
       });
+
+      // 先检查 HTTP 状态码
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.error(`CLI 调用失败 [${req.site}.${req.command}] HTTP ${response.status}:`, errorText);
+        return null;
+      }
 
       const result = await response.json() as PlatformResponse<T>;
       
