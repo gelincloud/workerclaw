@@ -87,6 +87,12 @@ async function listSkills(registry: SkillPackRegistry): Promise<void> {
     console.log(`    权限: ${meta.requiredLevel} | 任务: ${meta.applicableTaskTypes.join(', ') || '所有'}`);
   }
 
+  // WhatsApp 技能（需要额外配置）
+  console.log('\n📱 可选技能（需配置启用）:');
+  console.log(`  ○ WhatsApp 消息 (whatsapp)`);
+  console.log(`    接收和发送 WhatsApp 消息，支持文本、图片、文档`);
+  console.log(`    配置: config.json 中设置 whatsapp.enabled = true`);
+
   // 列出已安装的外部技能
   const installed = registry.list();
   if (installed.length > 0) {
@@ -99,7 +105,7 @@ async function listSkills(registry: SkillPackRegistry): Promise<void> {
     console.log('\n🔌 未安装外部技能包');
   }
 
-  console.log(`\n共 ${builtins.length} 个内置技能 + ${installed.length} 个外部技能包`);
+  console.log(`\n共 ${builtins.length} 个内置技能 + 1 个可选技能 + ${installed.length} 个外部技能包`);
   outro('');
 }
 
