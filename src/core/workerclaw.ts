@@ -13,9 +13,11 @@ import { BehaviorScheduler, type BehaviorCallbacks } from '../active-behavior/in
 import { getBuiltinSkills } from '../skills/index.js';
 import { ExperienceManager, DEFAULT_EXPERIENCE_CONFIG } from '../experience/index.js';
 import { RecurringTaskScheduler, DEFAULT_SCHEDULER_CONFIG } from '../scheduler/index.js';
+import { WeiboCommander } from '../commander/index.js';
 import type { WorkerClawConfig } from './config.js';
 import type { ExperienceConfig } from '../experience/types.js';
 import type { RecurringTaskSchedulerConfig } from '../scheduler/recurring-task-scheduler.js';
+import type { WeiboCommanderConfig } from '../commander/types.js';
 
 // ==================== WorkerClaw 主类 ====================
 
@@ -30,6 +32,7 @@ export class WorkerClaw {
   private behaviorScheduler: BehaviorScheduler;
   private experienceManager: ExperienceManager | null = null;
   private recurringTaskScheduler: RecurringTaskScheduler | null = null;
+  private weiboCommander: WeiboCommander | null = null;
 
   private isRunning = false;
 
@@ -126,6 +129,44 @@ export class WorkerClaw {
       this.recurringTaskScheduler.setAgentEngine(this.taskManager.getAgentEngine());
       // 注入到 TaskManager 供主人指令使用
       this.taskManager.setRecurringTaskScheduler(this.recurringTaskScheduler);
+    }
+
+    // 微博运营指挥官（私有虾专用）
+    // 私有虾模式下，如果配置了 weiboCommander.enabled，则自动启动指挥官
+    if (config.weiboCommander?.enabled && config.mode === 'private') {
+      const weiboConfig: WeiboCommanderConfig = {
+        enabled: true,
+        ownerId: config.weiboCommander.ownerId || (config as any).ownerId || '',
+        platformApiUrl: config.platform.apiUrl || 'https://www.miniabc.top',
+        collection: {
+          intervalMs: config.weiboCommander.collection?.intervalMs || 30 * 60 * 1000,
+          trendingIntervalMs: 60 * 60 * 1000,
+          historyRetentionDays: 30,
+          collectTrending: true,
+          collectInteractions: true,
+        },
+        automation: {
+          autoPost: true,
+          autoReply: true,
+          autoFollow: false,
+          maxPostsPerDay: config.weiboCommander.automation?.maxPostsPerDay || 4,
+          maxRepliesPerDay: config.weiboCommander.automation?.maxRepliesPerDay || 20,
+          minFollowerToReply: 100,
+          requireConfirmation: config.weiboCommander.automation?.requireConfirmation ?? false,
+        },
+        templateId: config.weiboCommander.templateId || 'standard',
+      };
+      this.weiboCommander = new WeiboCommander(
+        weiboConfig,
+        config.platform,
+        config.llm,
+      );
+      // 注入 AgentEngine 供指挥官调用
+      this.weiboCommander.setAgentEngine(this.taskManager.getAgentEngine());
+      // 将指挥官的定时任务注入调度器
+      if (this.recurringTaskScheduler) {
+        this.weiboCommander.setRecurringTaskScheduler(this.recurringTaskScheduler);
+      }
     }
 
     // 注入 WebSocket 客户端（用于发送聊天室消息等）
@@ -402,6 +443,12 @@ export class WorkerClaw {
       if (this.config.mode === 'private' && this.recurringTaskScheduler) {
         this.recurringTaskScheduler.start();
         this.logger.info('⏰ 定时任务调度器已启动（私有虾模式）');
+      }
+
+      // 私有虾模式：启动微博运营指挥官
+      if (this.weiboCommander) {
+        await this.weiboCommander.start();
+        this.logger.info('📱 微博运营指挥官已启动');
       }
 
       // 监听租用状态变化：租用到期后恢复社交行为（仅限原模式为 public 的虾）

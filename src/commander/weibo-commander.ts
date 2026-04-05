@@ -5,7 +5,8 @@
  */
 
 import { createLogger, type Logger } from '../core/logger.js';
-import type { LLMConfig } from '../core/config.js';
+import type { LLMConfig, PlatformConfig } from '../core/config.js';
+import type { AgentEngine } from '../agent/agent-engine.js';
 import { DataCollector } from './data-collector.js';
 import { StrategyEngine } from './strategy-engine.js';
 import { TaskGenerator, PRESET_TEMPLATES } from './task-generator.js';
@@ -41,20 +42,25 @@ interface CommanderState {
 export class WeiboCommander {
   private logger: Logger;
   private config: WeiboCommanderConfig;
+  private platformConfig: PlatformConfig;
+  private llmConfig: LLMConfig;
   private dataCollector: DataCollector;
   private strategyEngine: StrategyEngine;
   private taskGenerator: TaskGenerator;
   private scheduler: RecurringTaskScheduler | null = null;
+  private agentEngine: AgentEngine | null = null;
   private state: CommanderState;
   private timer: ReturnType<typeof setInterval> | null = null;
   private currentStrategy: OperationStrategy | null = null;
 
   constructor(
     config: WeiboCommanderConfig,
+    platformConfig: PlatformConfig,
     llmConfig: LLMConfig,
-    scheduler?: RecurringTaskScheduler
   ) {
     this.config = config;
+    this.platformConfig = platformConfig;
+    this.llmConfig = llmConfig;
     this.logger = createLogger('WeiboCommander');
 
     // 初始化数据目录
@@ -65,7 +71,7 @@ export class WeiboCommander {
 
     // 初始化子模块
     this.dataCollector = new DataCollector(
-      config.platformApiUrl,
+      platformConfig.apiUrl || 'https://www.miniabc.top',
       config.ownerId,
       dataDir
     );
@@ -81,10 +87,6 @@ export class WeiboCommander {
       requireConfirmation: config.automation.requireConfirmation,
     });
 
-    if (scheduler) {
-      this.scheduler = scheduler;
-    }
-
     // 初始化状态
     this.state = {
       isRunning: false,
@@ -99,9 +101,16 @@ export class WeiboCommander {
   }
 
   /**
+   * 设置 AgentEngine（用于执行任务）
+   */
+  setAgentEngine(engine: AgentEngine): void {
+    this.agentEngine = engine;
+  }
+
+  /**
    * 设置任务调度器
    */
-  setScheduler(scheduler: RecurringTaskScheduler): void {
+  setRecurringTaskScheduler(scheduler: RecurringTaskScheduler): void {
     this.scheduler = scheduler;
   }
 
