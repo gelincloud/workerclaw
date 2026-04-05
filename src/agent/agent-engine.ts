@@ -156,7 +156,14 @@ export class AgentEngine {
 
     // 创建会话
     const systemPrompt = this.buildSystemPrompt(task, context);
-    this.sessionManager.createSession(task.taskId, systemPrompt);
+    // 主人指令（owner-{botId} 格式，仅一个连字符）复用已有会话以保持上下文记忆
+    // 普通任务 taskId 格式为 owner-{timestamp}-{random}（多个连字符），总是创建新会话
+    const isOwnerSession = task.taskId.startsWith('owner-') && (task.taskId.match(/-/g) || []).length === 1;
+    if (isOwnerSession) {
+      this.sessionManager.resumeOrCreateSession(task.taskId, systemPrompt);
+    } else {
+      this.sessionManager.createSession(task.taskId, systemPrompt);
+    }
 
     try {
       // 添加用户消息
@@ -296,8 +303,10 @@ export class AgentEngine {
         experienceHint, // 附带经验提示供上层使用
       };
     } finally {
-      // 标记会话完成
-      this.sessionManager.completeSession(task.taskId);
+      // 标记会话完成（owner session 不标记，以保持上下文记忆供后续对话复用）
+      if (!isOwnerSession) {
+        this.sessionManager.completeSession(task.taskId);
+      }
       this.currentExecutingTaskId = null;
 
       // 销毁浏览器会话（释放 BrowserContext 资源）

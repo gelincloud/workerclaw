@@ -63,7 +63,7 @@ export class SessionManager {
   }
 
   /**
-   * 创建新会话
+   * 创建新会话（如果已存在则重置）
    */
   createSession(id: string, systemPrompt?: string): Session {
     if (this.sessions.has(id)) {
@@ -89,6 +89,26 @@ export class SessionManager {
     this.logger.debug(`创建会话 [${id}]`);
 
     return session;
+  }
+
+  /**
+   * 复用或创建会话（用于主人连续指令的上下文记忆）
+   * 如果会话已存在且未完成，直接追加消息而不重置历史
+   * 如果不存在或已完成，创建新会话
+   */
+  resumeOrCreateSession(id: string, systemPrompt?: string): Session {
+    const existing = this.sessions.get(id);
+    if (existing && !existing.completed) {
+      // 复用已有会话，更新 system prompt（保留历史消息）
+      if (systemPrompt && existing.messages.length > 0 && existing.messages[0].role === 'system') {
+        existing.messages[0].content = systemPrompt;
+      }
+      existing.updatedAt = Date.now();
+      this.logger.debug(`复用会话 [${id}]，当前消息数: ${existing.messages.length}`);
+      return existing;
+    }
+    // 不存在或已完成 → 创建新会话
+    return this.createSession(id, systemPrompt);
   }
 
   /**

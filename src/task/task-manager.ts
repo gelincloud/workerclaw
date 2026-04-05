@@ -2382,7 +2382,21 @@ ${existingVotesText}
    * 私有虾直接执行主人的指令（不走任务流）
    * 将主人消息作为任务，通过 AgentEngine.executeTask 真正执行（支持工具调用）
    */
+  private ownerExecuting = false; // 串行锁，防止主人指令并发执行
+
   private async handleOwnerDirectMessage(senderId: string, content: string): Promise<void> {
+    // 如果上一条主人指令还在执行，先排队等待
+    if (this.ownerExecuting) {
+      this.logger.warn('🔒 主人指令正在执行中，新的指令将被忽略');
+      await this.platformApi.sendPrivateMessage(
+        this.config.platform.botId, senderId,
+        '上一条指令还在执行中，请稍等完成后再发送新指令哦～',
+      );
+      return;
+    }
+    this.ownerExecuting = true;
+
+    try {
     this.logger.info(`🔒 私有虾收到主人指令: "${content.substring(0, 50)}"`);
 
     const botName = this.config.personality.name || '内勤虾';
@@ -2410,9 +2424,10 @@ ${existingVotesText}
     }
 
     // 非闲聊：构建虚拟任务执行（走完整的 Agent 工具调用循环）
-    const taskId = `owner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // 使用固定 taskId（owner-{botId}），让连续对话共享同一个 session 上下文
+    const fixedTaskId = `owner-${this.config.platform.botId || 'default'}`;
     const task: import('../types/task.js').Task = {
-      taskId,
+      taskId: fixedTaskId,
       taskType: 'other',
       title: content.substring(0, 50),
       description: content,
@@ -2443,46 +2458,47 @@ ${existingVotesText}
       `收到，正在执行～`,
     );
 
-    try {
-      const result = await this.agentEngine.executeTask(task, context);
-      clearTimeout(taskTimer);
+    const result = await this.agentEngine.executeTask(task, context);
+    clearTimeout(taskTimer);
 
-      // 提取执行结果回复主人
-      let replyText = '';
-      if (result.status === 'completed') {
-        // 优先使用 content（LLM 最终回复文本）
-        if (result.content) {
-          replyText = result.content;
-        } else if (result.outputs && result.outputs.length > 0) {
-          // 提取文本输出
-          const textOutputs = result.outputs.filter(o => o.type === 'text');
-          if (textOutputs.length > 0) {
-            replyText = textOutputs.map(o => o.content).join('\n');
-          } else {
-            replyText = `已完成，生成了 ${result.outputs.length} 个文件。`;
-          }
+    // 提取执行结果回复主人
+    let replyText = '';
+    if (result.status === 'completed') {
+      // 优先使用 content（LLM 最终回复文本）
+      if (result.content) {
+        replyText = result.content;
+      } else if (result.outputs && result.outputs.length > 0) {
+        // 提取文本输出
+        const textOutputs = result.outputs.filter(o => o.type === 'text');
+        if (textOutputs.length > 0) {
+          replyText = textOutputs.map(o => o.content).join('\n');
+        } else {
+          replyText = `已完成，生成了 ${result.outputs.length} 个文件。`;
         }
       }
+    }
 
-      if (!replyText) {
-        replyText = result.status === 'completed' ? '已执行完毕。' : `执行遇到问题：${result.error || '未知错误'}`;
-      }
+    if (!replyText) {
+      replyText = result.status === 'completed' ? '已执行完毕。' : `执行遇到问题：${result.error || '未知错误'}`;
+    }
 
-      // 限制回复长度
-      if (replyText.length > 2000) {
-        replyText = replyText.substring(0, 2000) + '...';
-      }
+    // 限制回复长度
+    if (replyText.length > 2000) {
+      replyText = replyText.substring(0, 2000) + '...';
+    }
 
-      await this.platformApi.sendPrivateMessage(this.config.platform.botId, senderId, replyText);
-      this.logger.info(`🔒 主人指令执行完成: ${replyText.substring(0, 50)}`);
+    await this.platformApi.sendPrivateMessage(this.config.platform.botId, senderId, replyText);
+    this.logger.info(`🔒 主人指令执行完成: ${replyText.substring(0, 50)}`);
+
     } catch (err) {
-      clearTimeout(taskTimer);
       this.logger.error('🔒 执行主人指令异常', err);
       await this.platformApi.sendPrivateMessage(
         this.config.platform.botId,
         senderId,
         `执行时出错了：${(err as Error).message || '未知错误'}，请稍后再试。`,
       );
+    } finally {
+      this.ownerExecuting = false;
     }
   }
 
