@@ -18,7 +18,7 @@ case "${1:-start}" in
       LATEST_VERSION=$(npm view workerclaw version 2>/dev/null)
       if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ] && [ -n "$LATEST_VERSION" ]; then
         echo "⬆️  发现新版本: ${CURRENT_VERSION:-未知} → $LATEST_VERSION"
-        npm install -g workerclaw@latest --registry https://registry.npmjs.org
+        npm install -g workerclaw@latest --registry https://registry.npmjs.org 2>/dev/null
         echo "✅ 已更新到 $LATEST_VERSION"
       else
         echo "✅ 已是最新版本 $CURRENT_VERSION"
