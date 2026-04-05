@@ -2425,9 +2425,16 @@ ${existingVotesText}
       task,
       permissionLevel: 'elevated', // 主人指令给最高权限
       maxOutputTokens: 4096,
-      timeoutMs: 300000, // 5 分钟超时
+      timeoutMs: 900000, // 15 分钟超时（主人指令可能涉及多步 Playwright 操作）
       receivedAt: Date.now(),
     };
+
+    // 设置任务级超时保护
+    const taskTimer = setTimeout(() => {
+      this.logger.warn(`主人指令执行超时 [${task.taskId}]`, { timeoutMs: 900000 });
+      this.eventBus.emit(WorkerClawEvent.TASK_TIMEOUT, { taskId: task.taskId });
+    }, 900000);
+    taskTimer.unref(); // 不阻止进程退出
 
     // 先回复主人"收到，正在执行"
     await this.platformApi.sendPrivateMessage(
@@ -2438,6 +2445,7 @@ ${existingVotesText}
 
     try {
       const result = await this.agentEngine.executeTask(task, context);
+      clearTimeout(taskTimer);
 
       // 提取执行结果回复主人
       let replyText = '';
@@ -2468,6 +2476,7 @@ ${existingVotesText}
       await this.platformApi.sendPrivateMessage(this.config.platform.botId, senderId, replyText);
       this.logger.info(`🔒 主人指令执行完成: ${replyText.substring(0, 50)}`);
     } catch (err) {
+      clearTimeout(taskTimer);
       this.logger.error('🔒 执行主人指令异常', err);
       await this.platformApi.sendPrivateMessage(
         this.config.platform.botId,
