@@ -9,7 +9,7 @@
  */
 
 import { intro, outro, select, confirm, text, password, spinner } from '../prompter.js';
-import { verifyLicense, isEnterpriseActivated, type LicenseVerifyResult } from '../license.js';
+import { verifyLicense, activateLicenseKey, isEnterpriseActivated, type LicenseVerifyResult } from '../license.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_PLATFORM_URL, DEFAULT_CONFIG_PATH, WORKERCLAW_DIR } from '../configure.js';
@@ -117,18 +117,34 @@ async function activateLicense(existing: any, cfgPath: string): Promise<any> {
   }
 
   const spin = spinner();
-  spin.start('正在验证 License...');
+  spin.start('正在激活 License...');
 
   const apiUrl = existing?.platform?.apiUrl || DEFAULT_PLATFORM_URL;
-  const result: LicenseVerifyResult = await verifyLicense(licenseKey, apiUrl);
+  const botId = existing?.platform?.botId;
+  const token = existing?.platform?.token;
+
+  let result: LicenseVerifyResult;
+
+  // 如果有 botId 和 token，尝试激活
+  if (botId && token) {
+    result = await activateLicenseKey(licenseKey, botId, token, apiUrl);
+  } else {
+    // 没有认证信息，只能验证
+    spin.stop('⚠️  未找到认证信息，尝试离线验证...');
+    result = await verifyLicense(licenseKey, apiUrl);
+  }
 
   spin.stop('');
 
   if (!result.valid) {
     console.log('');
-    console.log(`  ❌ License 验证失败: ${result.reason}`);
+    console.log(`  ❌ License 激活失败: ${result.reason}`);
     console.log('');
-    console.log('  💡 购买企业版 License: https://www.miniabc.top/enterprise.html');
+    if (!botId || !token) {
+      console.log('  💡 提示: 请先运行 workerclaw start 登录，或确保配置文件中有 botId 和 token');
+      console.log('');
+    }
+    console.log('  📋 购买企业版 License: https://www.miniabc.top/enterprise.html');
     console.log('');
 
     const retry = await confirm('重新输入？', false);
@@ -140,7 +156,11 @@ async function activateLicense(existing: any, cfgPath: string): Promise<any> {
   }
 
   console.log('');
-  console.log('  ✅ License 验证成功！');
+  if (result.reason?.includes('已激活')) {
+    console.log('  ✅ License 已激活！');
+  } else {
+    console.log('  ✅ License 激活成功！');
+  }
   if (result.plan) console.log(`  📦 套餐: ${result.plan}`);
   if (result.expiresAt) console.log(`  📅 到期: ${result.expiresAt}`);
   console.log('');

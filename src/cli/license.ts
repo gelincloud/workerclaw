@@ -84,6 +84,53 @@ export async function verifyLicense(
 }
 
 /**
+ * 激活 License Key（调用平台 API，需要认证）
+ */
+export async function activateLicenseKey(
+  key: string,
+  botId: string,
+  token: string,
+  apiUrl: string = 'https://www.miniabc.top',
+): Promise<LicenseVerifyResult> {
+  const trimmedKey = key.trim().toUpperCase();
+
+  // 先检查格式
+  if (!isValidLicenseKeyFormat(trimmedKey)) {
+    return { valid: false, activated: false, reason: 'License Key 格式无效（应为 WC-E-xxxx-xxxx-xxxx-xxxx）' };
+  }
+
+  // 调用平台 API 激活
+  try {
+    const resp = await fetch(`${apiUrl}/api/license/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ licenseKey: trimmedKey, botId, token }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const data: any = await resp.json();
+
+    if (data.success && data.valid) {
+      return {
+        valid: true,
+        activated: true,
+        expiresAt: data.expiresAt,
+        plan: data.plan,
+        reason: data.message,
+      };
+    } else {
+      return {
+        valid: false,
+        activated: false,
+        reason: data.error || 'License 激活失败',
+      };
+    }
+  } catch (err: any) {
+    return { valid: false, activated: false, reason: `激活失败: ${err.message}` };
+  }
+}
+
+/**
  * 检查本地配置是否已激活企业版
  */
 export function isEnterpriseActivated(config?: { enterprise?: { activated: boolean; expiresAt?: string } }): boolean {
