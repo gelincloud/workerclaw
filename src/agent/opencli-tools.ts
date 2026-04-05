@@ -29,6 +29,8 @@
  *   - sinafinance: news, stock, rolling-news
  *   - xueqiu: hot, hot-stock, search, stock, feed
  *   - weibo: hot_search, search (通过 web_cli 代理还可调用: post, retweet, comment, like, profile)
+ *   - zhihu: hot, search, profile, question (通过 web_cli 代理还可调用: article, answer, comment)
+ *   - xiaohongshu: hot, search, note, comments, profile (通过 web_cli 代理还可调用: publish)
  */
 
 import { createLogger } from '../core/logger.js';
@@ -989,7 +991,14 @@ export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
       }
 
       if (!response.ok) {
+        // 尝试从 JSON body 中提取结构化错误信息（平台可能返回 200/500 + success:false）
         const errorText = await response.text().catch(() => '');
+        try {
+          const errorResult = JSON.parse(errorText) as { success: boolean; error?: string; data?: any };
+          if (errorResult.error) {
+            return { toolCallId, success: false, content: errorResult.error, error: errorResult.error };
+          }
+        } catch { /* 非 JSON 格式，继续用原始错误文本 */ }
         return { toolCallId, success: false, content: `API 请求失败: HTTP ${response.status} ${errorText}`, error: `http_${response.status}` };
       }
 
@@ -1015,7 +1024,7 @@ export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
   return {
     name: 'web_cli',
     description: `通过平台代理调用 OpenCLI 命令获取互联网数据。支持 fetch（公开API）、browser（网页渲染）、auth（带登录态）三种策略。
-可用命令格式: site/command，如 hackernews/top, stackoverflow/hot, v2ex/hot, reddit/hot, wikipedia/search, weibo/hot_search, weibo/search, weibo/post, weibo/retweet, weibo/comment, weibo/like, weibo/profile, browser/fetch 等。
+可用命令格式: site/command，如 hackernews/top, stackoverflow/hot, v2ex/hot, reddit/hot, wikipedia/search, weibo/hot_search, weibo/search, weibo/post, weibo/retweet, weibo/comment, weibo/like, weibo/profile, zhihu/hot, zhihu/search, zhihu/article, zhihu/answer, zhihu/comment, zhihu/question, zhihu/profile, xiaohongshu/hot, xiaohongshu/search, xiaohongshu/note, xiaohongshu/comments, xiaohongshu/profile, xiaohongshu/publish, browser/fetch 等。
 使用 web_cli_describe 工具查看完整命令列表。
 
 **重要：登录态管理**
@@ -1029,6 +1038,21 @@ export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
 - weibo/post: 发布微博（auth, 写操作）
 - weibo/retweet: 转发微博（auth, 写操作），参数: id(必填), comment(转发评语), is_comment(是否作为评论转发)
 - weibo/comment: 评论微博（auth, 写操作），参数: id(必填), content(必填)
+
+**知乎 PR 能力**：
+- zhihu/hot: 获取知乎热榜（fetch, 公开），可用于结合热门话题创作内容
+- zhihu/search: 搜索知乎内容（fetch, 公开）
+- zhihu/article: 发布知乎专栏文章（auth, 写操作），参数: title(必填), content(必填), column_id(专栏ID), draft(是否草稿)
+- zhihu/answer: 回答知乎问题（auth, 写操作），参数: id(问题ID,必填), content(回答内容,必填), draft(是否草稿)
+- zhihu/comment: 评论知乎内容（auth, 写操作），参数: content(必填), resource_type(answer/article/question), resource_id(必填), reply_to_id(回复某条评论)
+
+**小红书 PR 能力**：
+- xiaohongshu/hot: 小红书首页推荐 Feed（auth, 需要 Playwright）
+- xiaohongshu/search: 搜索小红书笔记（auth, 需要 Playwright），参数: query(必填), limit
+- xiaohongshu/note: 获取笔记正文和互动数据（auth, 需要 Playwright），参数: id(笔记ID或URL,必填)
+- xiaohongshu/comments: 获取笔记评论（auth, 需要 Playwright），参数: id(笔记ID或URL,必填), limit
+- xiaohongshu/profile: 获取小红书创作者信息（auth, 需要 Playwright）
+- xiaohongshu/publish: 发布图文笔记（auth, 写操作, 需要 Playwright），参数: title(必填,最多20字), content(必填), images(图片URL,逗号分隔,最多9张), topics(话题标签,逗号分隔), draft(是否草稿)
 - weibo/like: 点赞微博（auth, 写操作），参数: id(必填), undo(是否取消点赞)
 
 参数: site (必填), command (必填), query (搜索关键词), limit (返回条数), taskId (关联任务ID), dryRun (试运行)`,
@@ -1066,7 +1090,14 @@ async function fallbackGetRequest(baseUrl: string, site: string, command: string
   });
 
   if (!response.ok) {
+    // 尝试从 JSON body 中提取结构化错误信息
     const errorText = await response.text().catch(() => '');
+    try {
+      const errorResult = JSON.parse(errorText) as { success: boolean; error?: string; data?: any };
+      if (errorResult.error) {
+        return { toolCallId, success: false, content: errorResult.error, error: errorResult.error };
+      }
+    } catch { /* 非 JSON 格式，继续用原始错误文本 */ }
     return { toolCallId, success: false, content: `API 请求失败: HTTP ${response.status} ${errorText}`, error: `http_${response.status}` };
   }
 
