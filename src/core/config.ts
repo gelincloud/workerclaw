@@ -412,7 +412,7 @@ export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
     },
     timeout: {
       taskTimeoutMs: 300000,
-      llmTimeoutMs: 120000,  // 2 分钟，避免长时间等待
+      llmTimeoutMs: 90000,  // 90 秒，更快触发端点切换
       queueTimeoutMs: 60000,
       retryOnTimeout: true,  // 超时自动重试
       maxRetries: 2,         // 重试 2 次
