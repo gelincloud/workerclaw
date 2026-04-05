@@ -189,6 +189,44 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
       },
     ],
   },
+  {
+    id: 'test',
+    name: '测试模板',
+    description: '用于测试API和系统稳定性，每10分钟执行一次',
+    scenario: '开发测试环境',
+    tasks: [
+      {
+        id: 'test-check-me',
+        type: 'analyze_data',
+        prompt: '【测试任务】检查微博登录态。调用 weibo me 命令验证账号信息，仅返回结果，不做任何操作。',
+        schedule: '*/10 * * *', // 每10分钟执行一次
+        enabled: true,
+        source: 'template',
+        priority: 5,
+        maxPerDay: 10,
+      },
+      {
+        id: 'test-browse-trends',
+        type: 'browse_trends',
+        prompt: '【测试任务】获取微博热搜榜。调用 weibo hot_search 命令获取当前热搜，仅记录前5条，不做任何操作。',
+        schedule: '*/10 * * *', // 每10分钟执行一次
+        enabled: true,
+        source: 'template',
+        priority: 5,
+        maxPerDay: 10,
+      },
+      {
+        id: 'test-check-mentions',
+        type: 'check_mentions',
+        prompt: '【测试任务】检查微博@提及。调用 weibo mentions 命令查看是否有新@，仅记录数量，不做任何操作。',
+        schedule: '*/10 * * *', // 每10分钟执行一次
+        enabled: true,
+        source: 'template',
+        priority: 5,
+        maxPerDay: 10,
+      },
+    ],
+  },
 ];
 
 export class TaskGenerator {
