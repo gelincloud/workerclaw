@@ -42,3 +42,19 @@ export type {
 // 定时任务调度器
 export { RecurringTaskScheduler, CronParser, DEFAULT_SCHEDULER_CONFIG } from './scheduler/index.js';
 export type { RecurringTaskDef, RecurringTaskExecution, RecurringTaskSchedulerConfig } from './scheduler/index.js';
+
+// 微博运营指挥官
+export { WeiboCommander, DataCollector, StrategyEngine, TaskGenerator, PRESET_TEMPLATES } from './commander/index.js';
+export type {
+  WeiboCommanderConfig as WeiboCommanderConfigType,
+  WeiboAccountSnapshot,
+  WeiboHotSearch,
+  InteractionData,
+  OperationStrategy,
+  AutoTaskDef,
+  OperationTemplate,
+  ContentSuggestion,
+  PostingTimeSuggestion,
+  DailyReport,
+} from './commander/index.js';
+export { getCommanderTools, createCommanderToolExecutors } from './commander/tools.js';
