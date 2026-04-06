@@ -32,6 +32,47 @@ echo ""
 # 创建数据目录
 mkdir -p "$DATA_DIR"
 
+# ==================== 配置迁移（自动补全缺失字段） ====================
+migrate_config() {
+  if [ ! -f "$CONFIG_FILE" ]; then
+    return
+  fi
+
+  local need_migrate=false
+
+  # 检查是否缺少 whatsapp 字段
+  HAS_WHATSAPP=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print('yes' if 'whatsapp' in d else 'no')" 2>/dev/null)
+  if [ "$HAS_WHATSAPP" = "no" ]; then
+    need_migrate=true
+    echo "   🔄 检测到缺少 whatsapp 配置，正在添加默认配置..."
+    python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c['whatsapp'] = {
+    'enabled': False,
+    'sessionPath': './data/whatsapp-session',
+    'autoReply': {
+        'enabled': True,
+        'maxContextMessages': 20,
+        'maxMessagesPerMinute': 30
+    }
+}
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('   ✅ 已添加 whatsapp 默认配置（默认禁用）')
+" 2>/dev/null
+  fi
+
+  if [ "$need_migrate" = true ]; then
+    echo ""
+  fi
+}
+
+# 执行配置迁移
+migrate_config
+
 # 检查是否已有配置
 if [ -f "$CONFIG_FILE" ]; then
   echo "📄 已有配置文件: $CONFIG_FILE"
@@ -360,202 +401,24 @@ print('   WS:  ${new_ws_url}')
       exit 0
       ;;
     6)
-      # ========== 企业版配置 ==========
-      MODE_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('mode','public'))" 2>/dev/null)
-      LIC_STATUS=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); e=d.get('enterprise',{}); print('已激活' if e.get('activated') else '未激活')" 2>/dev/null)
-      KNOWLEDGE_LEN=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); k=d.get('personality',{}).get('customSystemPrompt',''); print(f'{len(k)}字符' if k else '未设置')" 2>/dev/null)
-      MEDIA_DIR_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('mediaDir','未设置'))" 2>/dev/null)
-      echo ""
-      echo "   ── 企业版配置 ──"
-      echo "   当前模式: $MODE_CUR"
-      echo "   License:  $LIC_STATUS"
-      echo "   专属知识: $KNOWLEDGE_LEN"
-      echo "   媒体库:   $MEDIA_DIR_CUR"
-      echo ""
-      echo "   6a) 切换运行模式（公有打工虾 ↔ 私有虾）"
-      echo "   6b) 激活企业版 License"
-      echo "   6c) 配置专属知识"
-      echo "   6d) 配置媒体资料库目录"
-      echo "   6e) 返回上级"
-      read -p "   请选择: " ent_choice
-
-      case "$ent_choice" in
-        6a)
-          echo ""
-          echo "   当前模式: $MODE_CUR"
-          echo "   🌐 公有打工虾：接平台任务，智能活跃，公域社交"
-          echo "   🔒 私有虾：专属知识库、媒体资料库，服务特定企业/个人"
-          echo ""
-          read -p "   新模式 (public/private) [$MODE_CUR]: " new_mode
-          new_mode="${new_mode:-$MODE_CUR}"
-          if [ "$new_mode" != "public" ] && [ "$new_mode" != "private" ]; then
-            echo "   ❌ 无效模式，请输入 public 或 private"
-          else
-            if [ "$new_mode" = "private" ]; then
-              ENT_ACT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('enterprise',{}).get('activated',False))" 2>/dev/null)
-              if [ "$ENT_ACT" != "True" ]; then
-                echo "   ⚠️  私有虾模式需要企业版 License"
-                echo "   📋 购买: https://www.miniabc.top/enterprise.html"
-                echo ""
-                read -p "   是否现在输入 License Key？[y/N]: " do_activate
-                if [ "$do_activate" = "y" ] || [ "$do_activate" = "Y" ]; then
-                  read -p "   输入 License Key: " lic_key
-                  if [ -n "$lic_key" ]; then
-                    API_URL_ENT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('apiUrl','https://www.miniabc.top'))" 2>/dev/null)
-                    LIC_RESULT=$(curl -s --max-time 15 "${API_URL_ENT}/api/license/verify" \
-                      -H "Content-Type: application/json" \
-                      -d "{\"licenseKey\":\"${lic_key}\"}" 2>&1)
-                    LIC_VALID=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('1' if d.get('success') and d.get('valid') else '0')" 2>/dev/null)
-                    if [ "$LIC_VALID" = "1" ]; then
-                      LIC_EXPIRES=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('expiresAt',''))" 2>/dev/null)
-                      python3 -c "
-import json, datetime
-cfg_path = '$CONFIG_FILE'
-with open(cfg_path, 'r') as f:
-    c = json.load(f)
-c.setdefault('enterprise', {})['key'] = '${lic_key}'
-c['enterprise']['activated'] = True
-c['enterprise']['activatedAt'] = datetime.datetime.now().isoformat()
-c['enterprise']['expiresAt'] = '${LIC_EXPIRES}'
-c['mode'] = 'private'
-with open(cfg_path, 'w') as f:
-    json.dump(c, f, indent=2, ensure_ascii=False)
-print('✅ License 已激活，已切换到私有虾模式')
-" 2>/dev/null
-                    else
-                      echo "   ❌ License 验证失败: ${LIC_RESULT:0:100}"
-                    fi
-                  fi
-                else
-                  echo "   已取消模式切换"
-                fi
-                echo ""
-                echo "   重启容器生效: docker compose restart"
-                exit 0
-              fi
-            fi
-            python3 -c "
-import json
-cfg_path = '$CONFIG_FILE'
-with open(cfg_path, 'r') as f:
-    c = json.load(f)
-c['mode'] = '${new_mode}'
-with open(cfg_path, 'w') as f:
-    json.dump(c, f, indent=2, ensure_ascii=False)
-print('✅ 运行模式已切换为: ${new_mode}')
-" 2>/dev/null
-          fi
-          ;;
-        6b)
-          echo ""
-          echo "   📋 购买企业版 License: https://www.miniabc.top/enterprise.html"
-          echo ""
-          read -p "   输入 License Key: " lic_key
-          if [ -z "$lic_key" ]; then
-            echo "   已取消"
-          else
-            API_URL_ENT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('apiUrl','https://www.miniabc.top'))" 2>/dev/null)
-            LIC_RESULT=$(curl -s --max-time 15 "${API_URL_ENT}/api/license/verify" \
-              -H "Content-Type: application/json" \
-              -d "{\"licenseKey\":\"${lic_key}\"}" 2>&1)
-            LIC_VALID=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('1' if d.get('success') and d.get('valid') else '0')" 2>/dev/null)
-            if [ "$LIC_VALID" = "1" ]; then
-              LIC_EXPIRES=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('expiresAt',''))" 2>/dev/null)
-              LIC_PLAN=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('plan',''))" 2>/dev/null)
-              python3 -c "
-import json, datetime
-cfg_path = '$CONFIG_FILE'
-with open(cfg_path, 'r') as f:
-    c = json.load(f)
-c.setdefault('enterprise', {})['key'] = '${lic_key}'
-c['enterprise']['activated'] = True
-c['enterprise']['activatedAt'] = datetime.datetime.now().isoformat()
-c['enterprise']['expiresAt'] = '${LIC_EXPIRES}'
-with open(cfg_path, 'w') as f:
-    json.dump(c, f, indent=2, ensure_ascii=False)
-print('✅ License 已激活')
-" 2>/dev/null
-              if [ -n "$LIC_EXPIRES" ]; then echo "   📅 到期: $LIC_EXPIRES"; fi
-            else
-              echo "   ❌ License 验证失败: ${LIC_RESULT:0:100}"
-            fi
-          fi
-          ;;
-        6c)
-          echo ""
-          echo "   专属知识会被注入到系统提示中，作为 ## 附加指引"
-          echo "   适合填写：企业介绍、产品信息、客服话术、FAQ 等"
-          echo ""
-          echo "   输入专属知识内容（输入 END 结束）："
-          KNOWLEDGE_INPUT=""
-          while IFS= read -r line; do
-            [ "$line" = "END" ] && break
-            KNOWLEDGE_INPUT="${KNOWLEDGE_INPUT}${line}
-"
-          done
-          if [ -n "$KNOWLEDGE_INPUT" ]; then
-            # 使用 python3 正确处理多行文本中的引号
-            python3 << 'PYEOF'
-import json
-cfg_path = '$CONFIG_FILE'
-knowledge = """$KNOWLEDGE_INPUT"""
-# 正确读取配置
-with open(cfg_path, 'r') as f:
-    c = json.load(f)
-c.setdefault('personality', {})['customSystemPrompt'] = knowledge.rstrip('\n')
-with open(cfg_path, 'w') as f:
-    json.dump(c, f, indent=2, ensure_ascii=False)
-print(f'✅ 专属知识已设置 ({len(knowledge.rstrip())} 字符)')
-PYEOF
-          else
-            echo "   未输入内容"
-          fi
-          ;;
-        6d)
-          echo ""
-          echo "   媒体资料库用于存放虾可以发送给用户的图片、视频、文档等文件"
-          MEDIA_DIR_NEW=$(python3 -c "import json,os; d=json.load(open('$CONFIG_FILE')); print(d.get('mediaDir',os.path.expanduser('~/.workerclaw/media')))" 2>/dev/null)
-          read -p "   媒体资料库目录 [$MEDIA_DIR_NEW]: " media_dir_input
-          media_dir_input="${media_dir_input:-$MEDIA_DIR_NEW}"
-          mkdir -p "$media_dir_input"
-          python3 -c "
-import json
-cfg_path = '$CONFIG_FILE'
-with open(cfg_path, 'r') as f:
-    c = json.load(f)
-c['mediaDir'] = '${media_dir_input}'
-with open(cfg_path, 'w') as f:
-    json.dump(c, f, indent=2, ensure_ascii=False)
-print('✅ 媒体资料库目录已设置为: ${media_dir_input}')
-" 2>/dev/null
-          ;;
-        6e)
-          echo "   返回上级"
-          ;;
-        *)
-          echo "   无效选择"
-          ;;
-      esac
-      echo ""
-      echo "   重启容器生效: docker compose restart"
-      exit 0
-      ;;
-    6)
       # ========== WhatsApp 配置 ==========
       WA_ENABLED=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('whatsapp',{}).get('enabled',False))" 2>/dev/null)
       WA_AUTO_REPLY=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); ar=d.get('whatsapp',{}).get('autoReply',{}); print('已启用' if ar.get('enabled',True) else '已禁用')" 2>/dev/null)
       WA_SESSION=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('whatsapp',{}).get('sessionPath','./data/whatsapp-session'))" 2>/dev/null)
+      WA_PROXY=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); p=d.get('whatsapp',{}).get('proxy',{}); print(p.get('url','') or f\"{p.get('host','')}:{p.get('port','')}\" if p else '')" 2>/dev/null)
 
       echo ""
       echo "   ── WhatsApp 配置 ──"
       echo "   技能状态: $([ "$WA_ENABLED" = "True" ] && echo '✅ 已启用' || echo '❌ 未启用')"
       echo "   自动回复: $WA_AUTO_REPLY"
       echo "   会话路径: $WA_SESSION"
+      echo "   代理设置: ${WA_PROXY:-未配置}"
       echo ""
       echo "   6a) 启用/禁用 WhatsApp 技能"
-      echo "   6b) 配置自动回复"
-      echo "   6c) 配置会话路径"
-      echo "   6d) 返回上级"
+      echo "   6b) 配置代理（网络被墙时使用）"
+      echo "   6c) 配置自动回复"
+      echo "   6d) 配置会话路径"
+      echo "   6e) 返回上级"
       read -p "   请选择: " wa_choice
 
       case "$wa_choice" in
@@ -601,6 +464,48 @@ print('✅ WhatsApp 技能已启用')
           fi
           ;;
         6b)
+          echo ""
+          echo "   ── 代理配置 ──"
+          echo "   当网络无法连接 WhatsApp 时（如被墙），需要配置代理"
+          echo ""
+          if [ -n "$WA_PROXY" ]; then
+            echo "   当前代理: $WA_PROXY"
+            read -p "   清除代理配置？[y/N]: " clear_proxy
+            if [ "$clear_proxy" = "y" ] || [ "$clear_proxy" = "Y" ]; then
+              python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {})['proxy'] = {}
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 代理配置已清除')
+" 2>/dev/null
+              WA_PROXY=""
+            fi
+          else
+            echo "   当前代理: 未配置"
+            echo ""
+            echo "   请输入代理地址（支持 HTTP/SOCKS5）"
+            echo "   示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+            echo ""
+            read -p "   代理 URL: " proxy_url
+            if [ -n "$proxy_url" ]; then
+              python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {})['proxy'] = {'url': '${proxy_url}'}
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 代理已配置: ${proxy_url}')
+" 2>/dev/null
+            fi
+          fi
+          ;;
+        6c)
           echo ""
           echo "   ── 自动回复配置 ──"
           WA_AR_ENABLED=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); ar=d.get('whatsapp',{}).get('autoReply',{}); print('true' if ar.get('enabled',True) else 'false')" 2>/dev/null)
@@ -680,7 +585,7 @@ print('✅ 上下文消息数量已设置为: $new_ctx')
 " 2>/dev/null
           fi
           ;;
-        6c)
+        6d)
           echo ""
           echo "   会话路径存储 WhatsApp 登录凭证"
           echo "   首次扫码后会话会保存，重启无需重新扫码"
@@ -698,7 +603,7 @@ with open(cfg_path, 'w') as f:
 print('✅ 会话路径已设置为: ${new_session}')
 " 2>/dev/null
           ;;
-        6d)
+        6e)
           echo "   返回上级"
           ;;
         *)
@@ -710,6 +615,187 @@ print('✅ 会话路径已设置为: ${new_session}')
       exit 0
       ;;
     7)
+      # ========== 企业版配置 ==========
+      MODE_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('mode','public'))" 2>/dev/null)
+      LIC_STATUS=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); e=d.get('enterprise',{}); print('已激活' if e.get('activated') else '未激活')" 2>/dev/null)
+      KNOWLEDGE_LEN=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); k=d.get('personality',{}).get('customSystemPrompt',''); print(f'{len(k)}字符' if k else '未设置')" 2>/dev/null)
+      MEDIA_DIR_CUR=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('mediaDir','未设置'))" 2>/dev/null)
+      echo ""
+      echo "   ── 企业版配置 ──"
+      echo "   当前模式: $MODE_CUR"
+      echo "   License:  $LIC_STATUS"
+      echo "   专属知识: $KNOWLEDGE_LEN"
+      echo "   媒体库:   $MEDIA_DIR_CUR"
+      echo ""
+      echo "   7a) 切换运行模式（公有打工虾 ↔ 私有虾）"
+      echo "   7b) 激活企业版 License"
+      echo "   7c) 配置专属知识"
+      echo "   7d) 配置媒体资料库目录"
+      echo "   7e) 返回上级"
+      read -p "   请选择: " ent_choice
+
+      case "$ent_choice" in
+        7a)
+          echo ""
+          echo "   当前模式: $MODE_CUR"
+          echo "   🌐 公有打工虾：接平台任务，智能活跃，公域社交"
+          echo "   🔒 私有虾：专属知识库、媒体资料库，服务特定企业/个人"
+          echo ""
+          read -p "   新模式 (public/private) [$MODE_CUR]: " new_mode
+          new_mode="${new_mode:-$MODE_CUR}"
+          if [ "$new_mode" != "public" ] && [ "$new_mode" != "private" ]; then
+            echo "   ❌ 无效模式，请输入 public 或 private"
+          else
+            if [ "$new_mode" = "private" ]; then
+              ENT_ACT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('enterprise',{}).get('activated',False))" 2>/dev/null)
+              if [ "$ENT_ACT" != "True" ]; then
+                echo "   ⚠️  私有虾模式需要企业版 License"
+                echo "   📋 购买: https://www.miniabc.top/enterprise.html"
+                echo ""
+                read -p "   是否现在输入 License Key？[y/N]: " do_activate
+                if [ "$do_activate" = "y" ] || [ "$do_activate" = "Y" ]; then
+                  read -p "   输入 License Key: " lic_key
+                  if [ -n "$lic_key" ]; then
+                    API_URL_ENT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('apiUrl','https://www.miniabc.top'))" 2>/dev/null)
+                    LIC_RESULT=$(curl -s --max-time 15 "${API_URL_ENT}/api/license/verify" \
+                      -H "Content-Type: application/json" \
+                      -d "{\"licenseKey\":\"${lic_key}\"}" 2>&1)
+                    LIC_VALID=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('1' if d.get('success') and d.get('valid') else '0')" 2>/dev/null)
+                    if [ "$LIC_VALID" = "1" ]; then
+                      LIC_EXPIRES=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('expiresAt',''))" 2>/dev/null)
+                      python3 -c "
+import json, datetime
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('enterprise', {})['key'] = '${lic_key}'
+c['enterprise']['activated'] = True
+c['enterprise']['activatedAt'] = datetime.datetime.now().isoformat()
+c['enterprise']['expiresAt'] = '${LIC_EXPIRES}'
+c['mode'] = 'private'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ License 已激活，已切换到私有虾模式')
+" 2>/dev/null
+                    else
+                      echo "   ❌ License 验证失败: ${LIC_RESULT:0:100}"
+                    fi
+                  fi
+                else
+                  echo "   已取消模式切换"
+                fi
+                echo ""
+                echo "   重启容器生效: docker compose restart"
+                exit 0
+              fi
+            fi
+            python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c['mode'] = '${new_mode}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 运行模式已切换为: ${new_mode}')
+" 2>/dev/null
+          fi
+          ;;
+        7b)
+          echo ""
+          echo "   📋 购买企业版 License: https://www.miniabc.top/enterprise.html"
+          echo ""
+          read -p "   输入 License Key: " lic_key
+          if [ -z "$lic_key" ]; then
+            echo "   已取消"
+          else
+            API_URL_ENT=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('platform',{}).get('apiUrl','https://www.miniabc.top'))" 2>/dev/null)
+            LIC_RESULT=$(curl -s --max-time 15 "${API_URL_ENT}/api/license/verify" \
+              -H "Content-Type: application/json" \
+              -d "{\"licenseKey\":\"${lic_key}\"}" 2>&1)
+            LIC_VALID=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('1' if d.get('success') and d.get('valid') else '0')" 2>/dev/null)
+            if [ "$LIC_VALID" = "1" ]; then
+              LIC_EXPIRES=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('expiresAt',''))" 2>/dev/null)
+              LIC_PLAN=$(echo "$LIC_RESULT" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('plan',''))" 2>/dev/null)
+              python3 -c "
+import json, datetime
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('enterprise', {})['key'] = '${lic_key}'
+c['enterprise']['activated'] = True
+c['enterprise']['activatedAt'] = datetime.datetime.now().isoformat()
+c['enterprise']['expiresAt'] = '${LIC_EXPIRES}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ License 已激活')
+" 2>/dev/null
+              if [ -n "$LIC_EXPIRES" ]; then echo "   📅 到期: $LIC_EXPIRES"; fi
+            else
+              echo "   ❌ License 验证失败: ${LIC_RESULT:0:100}"
+            fi
+          fi
+          ;;
+        7c)
+          echo ""
+          echo "   专属知识会被注入到系统提示中，作为 ## 附加指引"
+          echo "   适合填写：企业介绍、产品信息、客服话术、FAQ 等"
+          echo ""
+          echo "   输入专属知识内容（输入 END 结束）："
+          KNOWLEDGE_INPUT=""
+          while IFS= read -r line; do
+            [ "$line" = "END" ] && break
+            KNOWLEDGE_INPUT="${KNOWLEDGE_INPUT}${line}
+"
+          done
+          if [ -n "$KNOWLEDGE_INPUT" ]; then
+            # 使用 python3 正确处理多行文本中的引号
+            python3 << 'PYEOF'
+import json
+cfg_path = '$CONFIG_FILE'
+knowledge = """$KNOWLEDGE_INPUT"""
+# 正确读取配置
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('personality', {})['customSystemPrompt'] = knowledge.rstrip('\n')
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print(f'✅ 专属知识已设置 ({len(knowledge.rstrip())} 字符)')
+PYEOF
+          else
+            echo "   未输入内容"
+          fi
+          ;;
+        7d)
+          echo ""
+          echo "   媒体资料库用于存放虾可以发送给用户的图片、视频、文档等文件"
+          MEDIA_DIR_NEW=$(python3 -c "import json,os; d=json.load(open('$CONFIG_FILE')); print(d.get('mediaDir',os.path.expanduser('~/.workerclaw/media')))" 2>/dev/null)
+          read -p "   媒体资料库目录 [$MEDIA_DIR_NEW]: " media_dir_input
+          media_dir_input="${media_dir_input:-$MEDIA_DIR_NEW}"
+          mkdir -p "$media_dir_input"
+          python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c['mediaDir'] = '${media_dir_input}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 媒体资料库目录已设置为: ${media_dir_input}')
+" 2>/dev/null
+          ;;
+        7e)
+          echo "   返回上级"
+          ;;
+        *)
+          echo "   无效选择"
+          ;;
+      esac
+      echo ""
+      echo "   重启容器生效: docker compose restart"
+      exit 0
+      ;;
+    8)
       echo "保持现有配置，跳过。"
       exit 0
       ;;

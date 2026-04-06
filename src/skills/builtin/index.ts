@@ -9,7 +9,8 @@ export { BrowserSkill } from '../browser-skill.js';
 export { WhatsAppSkill } from '../whatsapp/index.js';
 
 import type { Skill } from '../types.js';
-import type { BrowserSandboxConfig, WhatsAppConfig } from '../../core/config.js';
+import type { BrowserSandboxConfig, WhatsAppConfig, EnterpriseLicense } from '../../core/config.js';
+import { isEnterpriseActivated } from '../../cli/license.js';
 import { writingSkill } from './writing.js';
 import { searchSkill } from './search.js';
 import { codeSkill } from './code.js';
@@ -21,8 +22,13 @@ import { WhatsAppSkill } from '../whatsapp/index.js';
  *
  * @param browserConfig - 浏览器沙箱配置
  * @param whatsappConfig - WhatsApp 配置（可选，不传则不加载 WhatsApp 技能）
+ * @param enterprise - 企业版 License 配置（可选，用于验证 WhatsApp 技能权限）
  */
-export function getBuiltinSkills(browserConfig?: BrowserSandboxConfig, whatsappConfig?: WhatsAppConfig): Skill[] {
+export function getBuiltinSkills(
+  browserConfig?: BrowserSandboxConfig,
+  whatsappConfig?: WhatsAppConfig,
+  enterprise?: EnterpriseLicense,
+): Skill[] {
   const skills: Skill[] = [
     writingSkill,
     searchSkill,
@@ -30,8 +36,11 @@ export function getBuiltinSkills(browserConfig?: BrowserSandboxConfig, whatsappC
     new BrowserSkill(browserConfig),
   ];
 
-  // 仅在配置启用且有配置对象时加载 WhatsApp 技能
+  // WhatsApp 技能需要企业版 License
   if (whatsappConfig && whatsappConfig.enabled) {
+    if (!isEnterpriseActivated({ enterprise })) {
+      return skills; // 返回不包含 WhatsApp 的技能列表
+    }
     skills.push(new WhatsAppSkill(whatsappConfig));
   }
 

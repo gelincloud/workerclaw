@@ -122,6 +122,15 @@ export interface WhatsAppConfig {
   enabled?: boolean;
   /** 会话存储路径（相对路径），默认 ./data/whatsapp-session */
   sessionPath?: string;
+  /** 代理配置（用于连接 WhatsApp 服务器） */
+  proxy?: {
+    /** HTTP 代理地址，如 http://127.0.0.1:7890 */
+    host?: string;
+    /** 端口号 */
+    port?: number;
+    /** 完整代理 URL（优先使用），如 http://127.0.0.1:7890 */
+    url?: string;
+  };
   /** 自动回复配置 */
   autoReply?: {
     /** 是否启用自动回复，默认 true */
@@ -512,5 +521,9 @@ export function mergeConfig(
         ...((overrides as any).task?.timeout?.llmTimeoutMs ? { llmTimeoutMs: (overrides as any).task.timeout.llmTimeoutMs } : {}),
       },
     } as LLMConfig,
+    // WhatsApp 配置（可选，默认禁用）
+    whatsapp: (base as any).whatsapp || (overrides as any).whatsapp || { enabled: false },
+    // 企业版 License 配置（可选）
+    enterprise: (base as any).enterprise || (overrides as any).enterprise,
   } as WorkerClawConfig;
 }

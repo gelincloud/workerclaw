@@ -28,6 +28,7 @@ import { Boom } from '@hapi/boom';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WhatsAppConfig } from '../../core/config.js';
+import qrcode from 'qrcode-terminal';
 
 /** 媒体附件信息 */
 export interface WhatsAppMedia {
@@ -143,14 +144,38 @@ export class BaileysClient {
       const { version } = await fetchLatestBaileysVersion();
       this.logger.info(`Baileys 版本: ${version.join('.')}`);
 
+      // 构建代理配置
+      let proxyAgent: any = undefined;
+      if (this.config.proxy?.url || (this.config.proxy?.host && this.config.proxy?.port)) {
+        try {
+          const { SocksProxyAgent } = await import('socks-proxy-agent');
+          const proxyUrl = this.config.proxy.url || `http://${this.config.proxy.host}:${this.config.proxy.port}`;
+          proxyAgent = new SocksProxyAgent(proxyUrl);
+          this.logger.info(`使用代理: ${this.config.proxy.url || `${this.config.proxy.host}:${this.config.proxy.port}`}`);
+        } catch (err) {
+          this.logger.warn('加载代理失败，将直接连接:', (err as Error).message);
+        }
+      }
+
       // 创建 WebSocket 连接
+      this.logger.info('正在连接 WhatsApp WebSocket...');
+      this.logger.info('连接地址: wss://web.whatsapp.com/ws/chat');
+      if (proxyAgent) {
+        this.logger.info(`使用代理: ${this.config.proxy?.url || `${this.config.proxy?.host}:${this.config.proxy?.port}`}`);
+      } else {
+        this.logger.info('直连模式（未配置代理）');
+      }
+      this.logger.info('测试命令: curl -v --head https://web.whatsapp.com/ws/chat');
+
       this.socket = makeWASocket({
         version,
         auth: {
           creds: this.authState.state.creds,
           keys: makeCacheableSignalKeyStore(this.authState.state.keys),
         },
-        printQRInTerminal: true,
+        // 代理支持
+        agent: proxyAgent,
+        // printQRInTerminal 已弃用，改用 connection.update 事件处理 QR 码
         logger: {
           level: 'silent',
           // 静默 Baileys 内部日志，只输出关键信息
@@ -159,6 +184,16 @@ export class BaileysClient {
           warn: (...args: any[]) => this.logger.debug('[baileys:warn]', ...args.map(String)),
           error: (...args: any[]) => this.logger.error('[baileys:error]', ...args.map(String)),
           trace: () => {},
+          // Baileys 新版本要求 logger 必须有 child 方法
+          child: () => ({
+            level: 'silent',
+            info: (...args: any[]) => this.logger.debug('[baileys]', ...args.map(String)),
+            debug: () => {},
+            warn: (...args: any[]) => this.logger.debug('[baileys:warn]', ...args.map(String)),
+            error: (...args: any[]) => this.logger.error('[baileys:error]', ...args.map(String)),
+            trace: () => {},
+            child: function() { return this; },
+          }),
         } as any,
         browser: ['WorkerClaw', 'Chrome', '120.0.0'],
       });
@@ -180,8 +215,21 @@ export class BaileysClient {
       this.socket.ev.on('connection.update', (update: Partial<ConnectionState>) => {
         const { connection, lastDisconnect, qr } = update;
 
+        // 调试：打印完整的 update 对象
+        this.logger.debug('connection.update:', JSON.stringify({ connection, hasQr: !!qr, lastDisconnect }));
+
         if (qr) {
+          this.logger.info('📸 收到 QR 码，正在显示...');
           this.logger.info('需要扫码配对 — 请打开 WhatsApp > 关联设备 > 关联设备');
+          // 在终端显示 QR 码
+          console.log('\n' + '='.repeat(50));
+          console.log('📱 WhatsApp 配对 QR 码');
+          console.log('='.repeat(50));
+          console.log('\n请用手机 WhatsApp 扫描以下二维码：\n');
+          // 直接使用静态导入的 qrcode-terminal
+          qrcode.generate(qr, { small: true });
+          this.logger.info('✅ QR 码已在终端显示');
+          console.log('\n' + '='.repeat(50) + '\n');
           this.emit('connection:update', {
             connected: false,
             qr,
@@ -212,7 +260,11 @@ export class BaileysClient {
           const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
           const reasonMsg = this.getDisconnectReason(reason);
 
+          // 输出更详细的断开信息
           this.logger.warn(`WhatsApp 连接断开: ${reasonMsg}`);
+          if (lastDisconnect?.error) {
+            this.logger.debug('断开详情:', JSON.stringify((lastDisconnect.error as Boom)?.output || lastDisconnect.error));
+          }
 
           this.emit('connection:update', {
             connected: false,

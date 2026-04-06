@@ -493,6 +493,7 @@ function buildFinalConfig(
     mode: newValues.mode || existing?.mode || 'public',
     enterprise: (newValues as any).enterprise || existing?.enterprise,
     mediaDir: (newValues as any).mediaDir || existing?.mediaDir,
+    whatsapp: (newValues as any).whatsapp || existing?.whatsapp,
     platform: {
       apiUrl: newValues.platform?.apiUrl || existing?.platform?.apiUrl || DEFAULT_PLATFORM_URL,
       wsUrl: newValues.platform?.wsUrl || existing?.platform?.wsUrl || DEFAULT_WS_URL,

@@ -226,6 +226,7 @@ export class WorkerClaw {
       const builtinSkills = getBuiltinSkills(
         this.config.security.sandbox.browser,
         this.config.whatsapp,
+        this.config.enterprise,
       );
       for (const skill of builtinSkills) {
         this.taskManager.getAgentEngine().registerSkill(skill);
@@ -239,7 +240,8 @@ export class WorkerClaw {
       }
 
       // WhatsApp 技能：注入 LLM 调用函数（用于自动回复）
-      if (this.config.whatsapp?.enabled) {
+      // 注意：技能加载时已经检查过企业版 License，这里再检查一次确保安全
+      if (this.config.whatsapp?.enabled && this.config.enterprise?.activated) {
         const whatsappSkill = this.taskManager.getAgentEngine().getSkillRegistry().getSkill('whatsapp');
         if (whatsappSkill && typeof (whatsappSkill as any).setLLMChat === 'function') {
           (whatsappSkill as any).setLLMChat(

@@ -156,6 +156,14 @@ const main = defineCommand({
         const { mergeConfig } = await import('../core/config.js');
         // 用默认值合并用户配置，确保 task.concurrency 等字段存在
         const mergedConfig = mergeConfig({}, config);
+
+        // 检查 WhatsApp 配置（提示用户）
+        if (!rawConfig.whatsapp) {
+          console.log('💡 提示: WhatsApp 技能可用。运行 workerclaw configure 启用。');
+        } else if (rawConfig.whatsapp.enabled) {
+          console.log('📱 WhatsApp 技能已启用');
+        }
+
         const workerclaw = createWorkerClaw(mergedConfig);
 
         // 优雅关闭
@@ -309,13 +317,26 @@ const main = defineCommand({
           console.log(`  安全级别: ${config.security?.contentScan?.promptInjection?.enabled ? '已启用' : '未启用'} 内容扫描`);
           console.log(`  智能活跃: ${(config.activeBehavior?.enabled ?? true) ? '已启用' : '未启用'}`);
 
+          // 企业版状态
+          const { isEnterpriseActivated } = await import('./license.js');
+          const enterpriseActivated = isEnterpriseActivated(config);
+          if (enterpriseActivated) {
+            const expiresAt = config.enterprise?.expiresAt;
+            const expiresStr = expiresAt ? ` (到期: ${new Date(expiresAt).toLocaleDateString()})` : '';
+            console.log(`  企业版: ✅ 已激活${expiresStr}`);
+          } else {
+            console.log(`  企业版: ❌ 未激活 (部分功能受限)`);
+          }
+
           // 技能状态
           const { getBuiltinSkills } = await import('../skills/builtin/index.js');
-          const builtins = getBuiltinSkills();
+          const builtins = getBuiltinSkills(undefined, config.whatsapp, config.enterprise);
           console.log(`\n🔧 内置技能: ${builtins.length} 个`);
           for (const skill of builtins) {
             console.log(`  - ${skill.metadata.displayName} (${skill.metadata.name})`);
           }
+
+
         } catch {
           console.error('❌ 配置文件解析失败');
         }

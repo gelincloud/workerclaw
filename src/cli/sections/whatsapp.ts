@@ -73,6 +73,18 @@ async function toggleWhatsApp(existing: any, cfgPath: string): Promise<any> {
 
   console.log('');
   if (newEnabled) {
+    // 检查企业版 License
+    const { isEnterpriseActivated } = await import('../license.js');
+    if (!isEnterpriseActivated(existing)) {
+      console.log('  ❌ 无法启用 WhatsApp 技能');
+      console.log('');
+      console.log('  ⚠️  WhatsApp 技能需要企业版 License');
+      console.log('  请先激活企业版：workerclaw configure > 企业版激活');
+      console.log('');
+      outro('未修改');
+      return {};
+    }
+
     console.log('  ✅ WhatsApp 技能将启用');
     console.log('');
     console.log('  📋 使用步骤：');
