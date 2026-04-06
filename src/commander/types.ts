@@ -181,6 +181,8 @@ export interface AutoTaskDef {
   priority: number;
   /** 最大每日执行次数 */
   maxPerDay: number;
+  /** 最大每小时执行次数（可选，默认根据 maxPerDay 均摊） */
+  maxPerHour?: number;
 }
 
 /** 运营模板 */
