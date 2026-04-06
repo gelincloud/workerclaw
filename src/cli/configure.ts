@@ -10,6 +10,7 @@ import { configureLLM, type LLMSectionResult } from './sections/llm.js';
 import { configurePersonality, type PersonalitySectionResult } from './sections/personality.js';
 import { configureSecurity, type SecuritySectionResult } from './sections/security.js';
 import { configureEnterprise } from './sections/enterprise.js';
+import { configureWhatsApp } from './sections/whatsapp.js';
 import { type WorkerClawConfig, DEFAULT_CONFIG } from '../core/config.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -69,6 +70,7 @@ export async function configureWizard(
       { value: 'api_key', label: '修改 API Key', hint: 'LLM / 平台 Token' },
       { value: 'platform', label: '修改平台地址', hint: `当前: ${apiUrl}` },
       { value: 'active', label: '智能活跃设置', hint: '发推文/浏览/评论等自动行为' },
+      { value: 'whatsapp', label: '📱 WhatsApp 配置', hint: `${existingConfig.whatsapp?.enabled ? '✅ 已启用' : '❌ 未启用'}` },
       { value: 'enterprise', label: '🏢 企业版配置', hint: `模式: ${existingConfig.mode === 'private' ? '🔒 私有虾' : '🌐 公有'}` },
       { value: 'full', label: '完全重新配置', hint: '包括重新注册 Bot' },
     ], 'name');
@@ -93,6 +95,9 @@ export async function configureWizard(
         break;
       case 'active':
         await quickToggleActive(existingConfig, cfgPath);
+        break;
+      case 'whatsapp':
+        await handleWhatsApp(existingConfig, cfgPath);
         break;
       case 'enterprise':
         await handleEnterprise(existingConfig, cfgPath);
@@ -248,6 +253,29 @@ async function quickToggleActive(existing: Partial<WorkerClawConfig> | null, cfg
 
   saveConfig(cfgPath, finalConfig);
   outro('配置已保存');
+}
+
+/**
+ * WhatsApp 配置处理
+ */
+async function handleWhatsApp(existing: Partial<WorkerClawConfig> | null, cfgPath: string): Promise<void> {
+  const results = await configureWhatsApp(existing, cfgPath);
+  if (results && Object.keys(results).length > 0) {
+    const finalConfig = buildFinalConfig(existing, results);
+    saveConfig(cfgPath, finalConfig);
+
+    if (results.whatsapp?.enabled !== undefined) {
+      console.log(`\n✅ WhatsApp 技能已${results.whatsapp.enabled ? '启用' : '禁用'}`);
+    }
+    if (results.whatsapp?.autoReply) {
+      console.log(`\n✅ WhatsApp 自动回复已配置`);
+    }
+    if (results.whatsapp?.sessionPath) {
+      console.log(`\n✅ WhatsApp 会话路径: ${results.whatsapp.sessionPath}`);
+    }
+
+    outro('配置已保存');
+  }
 }
 
 /**

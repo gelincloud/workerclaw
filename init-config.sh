@@ -47,11 +47,12 @@ if [ -f "$CONFIG_FILE" ]; then
   echo "   3) 修改 LLM 配置（主端点 + 多端点管理）"
   echo "   4) 仅修改 LLM API Key"
   echo "   5) 仅修改平台地址"
-  echo "   6) 🏢 企业版配置（模式切换/License/知识/媒体库）"
-  echo "   7) 保持现有配置，跳过"
+  echo "   6) 📱 WhatsApp 配置（启用/自动回复/会话）"
+  echo "   7) 🏢 企业版配置（模式切换/License/知识/媒体库）"
+  echo "   8) 保持现有配置，跳过"
   echo ""
-  read -p "   请选择 [7]: " config_choice
-  config_choice="${config_choice:-7}"
+  read -p "   请选择 [8]: " config_choice
+  config_choice="${config_choice:-8}"
 
   case "$config_choice" in
     2)
@@ -529,6 +530,175 @@ print('✅ 媒体资料库目录已设置为: ${media_dir_input}')
 " 2>/dev/null
           ;;
         6e)
+          echo "   返回上级"
+          ;;
+        *)
+          echo "   无效选择"
+          ;;
+      esac
+      echo ""
+      echo "   重启容器生效: docker compose restart"
+      exit 0
+      ;;
+    6)
+      # ========== WhatsApp 配置 ==========
+      WA_ENABLED=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('whatsapp',{}).get('enabled',False))" 2>/dev/null)
+      WA_AUTO_REPLY=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); ar=d.get('whatsapp',{}).get('autoReply',{}); print('已启用' if ar.get('enabled',True) else '已禁用')" 2>/dev/null)
+      WA_SESSION=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('whatsapp',{}).get('sessionPath','./data/whatsapp-session'))" 2>/dev/null)
+
+      echo ""
+      echo "   ── WhatsApp 配置 ──"
+      echo "   技能状态: $([ "$WA_ENABLED" = "True" ] && echo '✅ 已启用' || echo '❌ 未启用')"
+      echo "   自动回复: $WA_AUTO_REPLY"
+      echo "   会话路径: $WA_SESSION"
+      echo ""
+      echo "   6a) 启用/禁用 WhatsApp 技能"
+      echo "   6b) 配置自动回复"
+      echo "   6c) 配置会话路径"
+      echo "   6d) 返回上级"
+      read -p "   请选择: " wa_choice
+
+      case "$wa_choice" in
+        6a)
+          echo ""
+          if [ "$WA_ENABLED" = "True" ]; then
+            echo "   当前状态: 已启用"
+            read -p "   禁用 WhatsApp 技能？[y/N]: " wa_disable
+            if [ "$wa_disable" = "y" ] || [ "$wa_disable" = "Y" ]; then
+              python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {})['enabled'] = False
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ WhatsApp 技能已禁用')
+" 2>/dev/null
+            fi
+          else
+            echo "   当前状态: 未启用"
+            echo ""
+            echo "   📋 使用步骤："
+            echo "      1. 启动容器后查看日志，会显示 QR 码"
+            echo "      2. 打开手机 WhatsApp: 设置 > 关联设备 > 关联设备"
+            echo "      3. 扫描终端中的 QR 码"
+            echo "      4. 连接成功后会话会自动保存"
+            echo ""
+            read -p "   启用 WhatsApp 技能？[Y/n]: " wa_enable
+            if [ "$wa_enable" != "n" ] && [ "$wa_enable" != "N" ]; then
+              python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {})['enabled'] = True
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ WhatsApp 技能已启用')
+" 2>/dev/null
+            fi
+          fi
+          ;;
+        6b)
+          echo ""
+          echo "   ── 自动回复配置 ──"
+          WA_AR_ENABLED=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); ar=d.get('whatsapp',{}).get('autoReply',{}); print('true' if ar.get('enabled',True) else 'false')" 2>/dev/null)
+
+          if [ "$WA_AR_ENABLED" = "true" ]; then
+            echo "   当前状态: 已启用"
+            read -p "   禁用自动回复？[y/N]: " ar_disable
+            if [ "$ar_disable" = "y" ] || [ "$ar_disable" = "Y" ]; then
+              python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {}).setdefault('autoReply', {})['enabled'] = False
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 自动回复已禁用')
+" 2>/dev/null
+            fi
+          else
+            echo "   当前状态: 已禁用"
+            read -p "   启用自动回复？[Y/n]: " ar_enable
+            if [ "$ar_enable" != "n" ] && [ "$ar_enable" != "N" ]; then
+              python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {}).setdefault('autoReply', {})['enabled'] = True
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 自动回复已启用')
+" 2>/dev/null
+            fi
+          fi
+
+          echo ""
+          read -p "   配置自动回复系统提示？[y/N]: " config_prompt
+          if [ "$config_prompt" = "y" ] || [ "$config_prompt" = "Y" ]; then
+            echo ""
+            echo "   系统提示词定义客服人设和回复规则"
+            echo "   输入系统提示（输入 END 结束）："
+            WA_PROMPT_INPUT=""
+            while IFS= read -r line; do
+              [ "$line" = "END" ] && break
+              WA_PROMPT_INPUT="${WA_PROMPT_INPUT}${line}
+"
+            done
+            if [ -n "$WA_PROMPT_INPUT" ]; then
+              python3 << 'PYEOF'
+import json
+cfg_path = '$CONFIG_FILE'
+prompt = """$WA_PROMPT_INPUT"""
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {}).setdefault('autoReply', {})['systemPrompt'] = prompt.rstrip('\n')
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print(f'✅ 系统提示已设置 ({len(prompt.rstrip())} 字符)')
+PYEOF
+            fi
+          fi
+
+          echo ""
+          WA_CTX=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('whatsapp',{}).get('autoReply',{}).get('maxContextMessages',20))" 2>/dev/null)
+          read -p "   上下文消息数量 [$WA_CTX]: " new_ctx
+          if [ -n "$new_ctx" ]; then
+            python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {}).setdefault('autoReply', {})['maxContextMessages'] = $new_ctx
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 上下文消息数量已设置为: $new_ctx')
+" 2>/dev/null
+          fi
+          ;;
+        6c)
+          echo ""
+          echo "   会话路径存储 WhatsApp 登录凭证"
+          echo "   首次扫码后会话会保存，重启无需重新扫码"
+          echo ""
+          read -p "   新的会话路径 [$WA_SESSION]: " new_session
+          new_session="${new_session:-$WA_SESSION}"
+          python3 -c "
+import json
+cfg_path = '$CONFIG_FILE'
+with open(cfg_path, 'r') as f:
+    c = json.load(f)
+c.setdefault('whatsapp', {})['sessionPath'] = '${new_session}'
+with open(cfg_path, 'w') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+print('✅ 会话路径已设置为: ${new_session}')
+" 2>/dev/null
+          ;;
+        6d)
           echo "   返回上级"
           ;;
         *)
