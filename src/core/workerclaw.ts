@@ -131,64 +131,76 @@ export class WorkerClaw {
       this.taskManager.setRecurringTaskScheduler(this.recurringTaskScheduler);
     }
 
-    // 微博运营指挥官（私有虾专用）
-    // 私有虾模式下，如果配置了 weiboCommander.enabled，则自动启动指挥官
-    if (config.weiboCommander?.enabled && config.mode === 'private') {
-      // 自动获取 ownerId（优先级：配置 → 绑定关系查询）
-      let ownerId = config.weiboCommander.ownerId || (config as any).ownerId || '';
-      
-      if (!ownerId && config.platform.botId) {
-        // 配置中没有 ownerId，尝试通过 botId 查询绑定关系
-        this.logger.info('配置中缺少 ownerId，尝试通过 botId 查询绑定关系...');
-        const resolved = await import('../commander/data-collector.js').then(m => 
-          m.DataCollector.resolveOwnerId(config.platform.apiUrl || 'https://www.miniabc.top', config.platform.botId)
-        );
-        if (resolved) {
-          ownerId = resolved.ownerId;
-          this.logger.info(`已通过 botId 获取 ownerId: ${ownerId}`);
-        } else {
-          this.logger.error('无法获取 ownerId，WeiboCommander 启动失败');
-          return;
-        }
-      }
+    // 注入 WebSocket 客户端（用于发送聊天室消息等）
+    this.taskManager.setWsClient(this.wsClient);
+  }
 
-      const weiboConfig: WeiboCommanderConfig = {
-        enabled: true,
-        ownerId: ownerId,
-        platformApiUrl: config.platform.apiUrl || 'https://www.miniabc.top',
-        collection: {
-          intervalMs: config.weiboCommander.collection?.intervalMs || 30 * 60 * 1000,
-          trendingIntervalMs: 60 * 60 * 1000,
-          historyRetentionDays: 30,
-          collectTrending: true,
-          collectInteractions: true,
-        },
-        automation: {
-          autoPost: true,
-          autoReply: true,
-          autoFollow: false,
-          maxPostsPerDay: config.weiboCommander.automation?.maxPostsPerDay || 4,
-          maxRepliesPerDay: config.weiboCommander.automation?.maxRepliesPerDay || 20,
-          minFollowerToReply: 100,
-          requireConfirmation: config.weiboCommander.automation?.requireConfirmation ?? false,
-        },
-        templateId: config.weiboCommander.templateId || 'standard',
-      };
-      this.weiboCommander = new WeiboCommander(
-        weiboConfig,
-        config.platform,
-        config.llm,
+  /**
+   * 初始化微博运营指挥官（异步方法）
+   * 需要在 start() 中调用
+   */
+  private async initializeWeiboCommander(): Promise<void> {
+    const config = this.config;
+    
+    // 私有虾模式下，如果配置了 weiboCommander.enabled，则自动启动指挥官
+    if (!config.weiboCommander?.enabled || config.mode !== 'private') {
+      return;
+    }
+
+    // 自动获取 ownerId（优先级：配置 → 绑定关系查询）
+    let ownerId = config.weiboCommander.ownerId || (config as any).ownerId || '';
+    
+    if (!ownerId && config.platform.botId) {
+      // 配置中没有 ownerId，尝试通过 botId 查询绑定关系
+      this.logger.info('配置中缺少 ownerId，尝试通过 botId 查询绑定关系...');
+      const resolved = await import('../commander/data-collector.js').then(m => 
+        m.DataCollector.resolveOwnerId(config.platform.apiUrl || 'https://www.miniabc.top', config.platform.botId)
       );
-      // 注入 AgentEngine 供指挥官调用
-      this.weiboCommander.setAgentEngine(this.taskManager.getAgentEngine());
-      // 将指挥官的定时任务注入调度器
-      if (this.recurringTaskScheduler) {
-        this.weiboCommander.setRecurringTaskScheduler(this.recurringTaskScheduler);
+      if (resolved) {
+        ownerId = resolved.ownerId;
+        this.logger.info(`已通过 botId 获取 ownerId: ${ownerId}`);
+      } else {
+        this.logger.error('无法获取 ownerId，WeiboCommander 启动失败');
+        return;
       }
     }
 
-    // 注入 WebSocket 客户端（用于发送聊天室消息等）
-    this.taskManager.setWsClient(this.wsClient);
+    const weiboConfig: WeiboCommanderConfig = {
+      enabled: true,
+      ownerId: ownerId,
+      platformApiUrl: config.platform.apiUrl || 'https://www.miniabc.top',
+      collection: {
+        intervalMs: config.weiboCommander.collection?.intervalMs || 30 * 60 * 1000,
+        trendingIntervalMs: 60 * 60 * 1000,
+        historyRetentionDays: 30,
+        collectTrending: true,
+        collectInteractions: true,
+      },
+      automation: {
+        autoPost: true,
+        autoReply: true,
+        autoFollow: false,
+        maxPostsPerDay: config.weiboCommander.automation?.maxPostsPerDay || 4,
+        maxRepliesPerDay: config.weiboCommander.automation?.maxRepliesPerDay || 20,
+        minFollowerToReply: 100,
+        requireConfirmation: config.weiboCommander.automation?.requireConfirmation ?? false,
+      },
+      templateId: config.weiboCommander.templateId || 'standard',
+    };
+    
+    this.weiboCommander = new WeiboCommander(
+      weiboConfig,
+      config.platform,
+      config.llm,
+    );
+    
+    // 注入 AgentEngine 供指挥官调用
+    this.weiboCommander.setAgentEngine(this.taskManager.getAgentEngine());
+    
+    // 将指挥官的定时任务注入调度器
+    if (this.recurringTaskScheduler) {
+      this.weiboCommander.setRecurringTaskScheduler(this.recurringTaskScheduler);
+    }
   }
 
   /**
@@ -242,6 +254,9 @@ export class WorkerClaw {
       if (this.experienceManager) {
         await this.experienceManager.init();
       }
+
+      // 初始化微博运营指挥官
+      await this.initializeWeiboCommander();
 
       // 注册消息处理器
       this.wsClient.onMessage((msg: any) => {
