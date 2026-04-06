@@ -2360,9 +2360,11 @@ ${existingVotesText}
 
   /**
    * 判断发送者是否是私有虾的主人
-   * 主人身份有两个来源：
+   * 主人身份有多个来源（优先级从高到低）：
    *   1. rentalState.renterId（租赁场景，从服务器获取）
    *   2. config.ownerId（私有虾直接购买场景，从控制台写入 config）
+   *   3. config.platform.ownerId（AgentEngine 设置的平台 ownerId）
+   *   4. config.weiboCommander.ownerId（微博运营指挥官的 ownerId）
    */
   private isOwner(senderId: string): boolean {
     if (!this.isPrivateMode()) return false;
@@ -2370,8 +2372,10 @@ ${existingVotesText}
     if (this.rentalState.renterId && senderId === this.rentalState.renterId) {
       return true;
     }
-        // 私有虾直接购买场景：ownerId 从 config 获取
-        const configOwnerId = this.config.ownerId;
+    // 私有虾直接购买场景：ownerId 从 config 获取（多个来源）
+    const configOwnerId = this.config.ownerId
+      || (this.config.platform as any)?.ownerId
+      || (this.config as any).weiboCommander?.ownerId;
     if (configOwnerId && senderId === configOwnerId) {
       return true;
     }
