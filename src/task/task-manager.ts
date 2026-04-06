@@ -702,18 +702,28 @@ export class TaskManager {
       const senderName = privateMsg.sender?.nickname || '用户';
       const content = privateMsg.content || '';
 
+      this.logger.info(`[DEBUG] handlePrivateMessageReply 开始: sender_id=${privateMsg.sender_id}, mode=${this.config.mode}`);
+
       // === 私有虾模式：分流处理 ===
       if (this.isPrivateMode()) {
+        this.logger.info(`[DEBUG] 进入私有模式分支`);
         // 不处理自己的消息（已在上面检查过，这里双重保险）
         if (privateMsg.sender_id === this.config.platform.botId) {
+          this.logger.info(`[DEBUG] 是自己发的消息，跳过`);
           return;
         }
 
-        if (this.isOwner(privateMsg.sender_id)) {
+        this.logger.info(`[DEBUG] 准备调用 isOwner, sender_id=${privateMsg.sender_id}`);
+        const ownerCheck = this.isOwner(privateMsg.sender_id);
+        this.logger.info(`[DEBUG] isOwner 返回: ${ownerCheck}`);
+        
+        if (ownerCheck) {
           // 主人：直接执行指令
+          this.logger.info(`[DEBUG] 识别为主人，执行指令`);
           await this.handleOwnerDirectMessage(privateMsg.sender_id, content);
         } else {
           // 外部人员：礼貌拒绝
+          this.logger.info(`[DEBUG] 识别为外部人员，拒绝`);
           await this.handlePrivateExternalMessage(privateMsg);
         }
         return; // 私有虾处理完毕，不走下面的打工虾逻辑
@@ -2367,18 +2377,30 @@ ${existingVotesText}
    *   4. config.weiboCommander.ownerId（微博运营指挥官的 ownerId）
    */
   private isOwner(senderId: string): boolean {
-    if (!this.isPrivateMode()) return false;
+    const isPrivate = this.isPrivateMode();
+    this.logger.info(`[isOwner] 检查开始: isPrivateMode=${isPrivate}, senderId=${senderId}`);
+    if (!isPrivate) return false;
+    
     // 租赁场景：renterId 从服务器同步
     if (this.rentalState.renterId && senderId === this.rentalState.renterId) {
+      this.logger.info(`[isOwner] 租赁场景匹配: renterId=${this.rentalState.renterId}`);
       return true;
     }
+    
     // 私有虾直接购买场景：ownerId 从 config 获取（多个来源）
-    const configOwnerId = this.config.ownerId
-      || (this.config.platform as any)?.ownerId
-      || (this.config as any).weiboCommander?.ownerId;
+    const fromConfig = this.config.ownerId;
+    const fromPlatform = (this.config.platform as any)?.ownerId;
+    const fromWeibo = (this.config as any).weiboCommander?.ownerId;
+    const configOwnerId = fromConfig || fromPlatform || fromWeibo;
+    
+    this.logger.info(`[isOwner] ownerId检查: fromConfig=${fromConfig}, fromPlatform=${fromPlatform}, fromWeibo=${fromWeibo}, 最终=${configOwnerId}`);
+    this.logger.info(`[isOwner] 匹配检查: senderId=${senderId}, configOwnerId=${configOwnerId}, match=${senderId === configOwnerId}`);
+    
     if (configOwnerId && senderId === configOwnerId) {
+      this.logger.info(`[isOwner] ✓ 匹配成功!`);
       return true;
     }
+    this.logger.info(`[isOwner] ✗ 匹配失败`);
     return false;
   }
 

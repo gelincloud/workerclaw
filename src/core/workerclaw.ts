@@ -68,7 +68,10 @@ export class WorkerClaw {
         task: config.task,
         personality: config.personality,
         mode: config.mode,
-        ownerId: (config as any).ownerId,
+        // ownerId 来源优先级：顶层 ownerId > weiboCommander.ownerId > platform.ownerId
+        ownerId: (config as any).ownerId
+          || (config as any).weiboCommander?.ownerId
+          || (config.platform as any)?.ownerId,
       },
       this.eventBus,
       this.securityGate,
