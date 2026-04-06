@@ -134,9 +134,27 @@ export class WorkerClaw {
     // 微博运营指挥官（私有虾专用）
     // 私有虾模式下，如果配置了 weiboCommander.enabled，则自动启动指挥官
     if (config.weiboCommander?.enabled && config.mode === 'private') {
+      // 自动获取 ownerId（优先级：配置 → 绑定关系查询）
+      let ownerId = config.weiboCommander.ownerId || (config as any).ownerId || '';
+      
+      if (!ownerId && config.platform.botId) {
+        // 配置中没有 ownerId，尝试通过 botId 查询绑定关系
+        this.logger.info('配置中缺少 ownerId，尝试通过 botId 查询绑定关系...');
+        const resolved = await import('../commander/data-collector.js').then(m => 
+          m.DataCollector.resolveOwnerId(config.platform.apiUrl || 'https://www.miniabc.top', config.platform.botId)
+        );
+        if (resolved) {
+          ownerId = resolved.ownerId;
+          this.logger.info(`已通过 botId 获取 ownerId: ${ownerId}`);
+        } else {
+          this.logger.error('无法获取 ownerId，WeiboCommander 启动失败');
+          return;
+        }
+      }
+
       const weiboConfig: WeiboCommanderConfig = {
         enabled: true,
-        ownerId: config.weiboCommander.ownerId || (config as any).ownerId || '',
+        ownerId: ownerId,
         platformApiUrl: config.platform.apiUrl || 'https://www.miniabc.top',
         collection: {
           intervalMs: config.weiboCommander.collection?.intervalMs || 30 * 60 * 1000,

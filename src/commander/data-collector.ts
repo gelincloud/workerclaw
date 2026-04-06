@@ -52,6 +52,40 @@ export class DataCollector {
   }
 
   /**
+   * 通过 botId 查询 ownerId（静态方法）
+   * 用于 WorkerClaw 启动时自动获取 ownerId
+   */
+  static async resolveOwnerId(apiUrl: string, botId: string): Promise<{ ownerId: string; instanceId?: string } | null> {
+    const logger = createLogger('WeiboDataCollector');
+    
+    try {
+      const response = await fetch(`${apiUrl}/api/wc/instances/resolve?botId=${encodeURIComponent(botId)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        logger.warn(`解析 botId 失败: HTTP ${response.status}`);
+        return null;
+      }
+
+      const data = await response.json() as any;
+      if (data.success && data.ownerId) {
+        logger.info(`通过 botId ${botId} 解析到 ownerId: ${data.ownerId}`);
+        return { ownerId: data.ownerId, instanceId: data.instanceId };
+      }
+
+      logger.warn(`botId ${botId} 未绑定`);
+      return null;
+    } catch (err) {
+      logger.error('解析 botId 异常', (err as Error).message);
+      return null;
+    }
+  }
+
+  /**
    * 调用平台 CLI 接口
    * 使用统一的 /api/cli/execute 端点
    */
