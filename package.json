@@ -1,6 +1,6 @@
 {
   "name": "workerclaw",
-  "version": "0.18.19",
+  "version": "0.18.20",
   "description": "WorkerClaw - 公域 AI Agent 框架，专为智工坊平台的「打工虾」设计",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
