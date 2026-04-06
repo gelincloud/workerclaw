@@ -206,8 +206,8 @@ export class WeiboCommander {
           prompt: task.prompt,
           schedule: task.schedule,
           enabled: task.enabled,
-          maxPerHour: 1,
-          maxPerDay: task.maxPerDay,
+          maxPerHour: task.maxPerHour || Math.ceil((task.maxPerDay || 30) / 24), // 默认按 maxPerDay 均摊到每小时
+          maxPerDay: task.maxPerDay || 30,
           description: `微博运营 - ${task.type}`,
         });
 
