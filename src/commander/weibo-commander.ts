@@ -209,6 +209,7 @@ export class WeiboCommander {
           maxPerHour: task.maxPerHour || Math.ceil((task.maxPerDay || 30) / 24), // 默认按 maxPerDay 均摊到每小时
           maxPerDay: task.maxPerDay || 30,
           description: `微博运营 - ${task.type}`,
+          source: task.source || 'template', // 模板任务不持久化
         });
 
         if (result.success) {

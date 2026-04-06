@@ -42,6 +42,8 @@ export interface RecurringTaskDef {
   timeoutMs?: number;
   /** 备注说明 */
   description?: string;
+  /** 任务来源：template=模板任务，auto=自动生成，dynamic=动态任务（持久化） */
+  source?: 'template' | 'auto' | 'dynamic';
 }
 
 /** 定时任务执行记录 */
@@ -460,7 +462,9 @@ export class RecurringTaskScheduler {
   }
 
   /**
-   * 添加/更新动态任务
+   * 添加/更新任务
+   * - source='dynamic': 动态任务，会持久化
+   * - source='template' 或未指定: 模板任务，不持久化（重启后重新从模板加载）
    */
   addTask(task: RecurringTaskDef): { success: boolean; error?: string } {
     // 验证 cron 表达式
@@ -480,8 +484,10 @@ export class RecurringTaskScheduler {
 
     this.dynamicTasks.set(task.id, task);
 
-    // 持久化动态任务
-    this.saveDynamicTasks();
+    // 只有动态任务才持久化（用户手动添加的）
+    if (task.source === 'dynamic') {
+      this.saveDynamicTasks();
+    }
 
     // 更新 cron 解析器
     if (task.enabled) {
@@ -499,7 +505,7 @@ export class RecurringTaskScheduler {
       }
     }
 
-    this.logger.info(`定时任务已添加/更新 [${task.id}]`);
+    this.logger.info(`定时任务已添加/更新 [${task.id}]${task.source === 'dynamic' ? ' (动态)' : ''}`);
     return { success: true };
   }
 
