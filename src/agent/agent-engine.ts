@@ -130,6 +130,18 @@ export class AgentEngine {
   }
 
   /**
+   * 设置 ownerId（用于 web_cli 工具的登录态注入）
+   * 在 WorkerClaw.start() 中通过 botId 查询后设置
+   */
+  setOwnerId(ownerId: string): void {
+    if (!this.config.platform) {
+      this.config.platform = {};
+    }
+    this.config.platform.ownerId = ownerId;
+    this.logger.info(`AgentEngine ownerId 已设置: ${ownerId}`);
+  }
+
+  /**
    * 获取工具注册表引用（供插件直接操作）
    */
   getToolRegistry(): ToolRegistry {
@@ -332,9 +344,30 @@ export class AgentEngine {
     maxRounds = 10,
   ): Promise<LLMResponse & { toolCallRounds: number }> {
     let round = 0;
+    let totalToolCalls = 0;
+    const maxTotalToolCalls = this.config.security?.contentScan?.resourceExhaustion?.maxToolCallsPerTask || 20;
 
     while (round < maxRounds) {
       round++;
+
+      // 检查工具调用次数限制
+      if (totalToolCalls >= maxTotalToolCalls) {
+        this.logger.warn(`LLM 循环达到工具调用上限 [${task.taskId}]`, { totalToolCalls, maxTotalToolCalls });
+        const { messages } = this.sessionManager.getFittedMessages(task.taskId);
+        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+        const content = lastAssistant?.content
+          ? (typeof lastAssistant.content === 'string' ? lastAssistant.content : JSON.stringify(lastAssistant.content))
+          : '已达到工具调用上限，任务终止';
+        return {
+          content,
+          hasToolCalls: false,
+          toolCalls: [],
+          toolCallRounds: round - 1,
+          model: this.config.llm.model,
+          finishReason: 'max_tool_calls',
+          allMessages: messages,
+        };
+      }
 
       // 获取适配后的消息
       const { messages, stats } = this.sessionManager.getFittedMessages(task.taskId);
@@ -395,11 +428,19 @@ export class AgentEngine {
 
       // 执行每个工具调用
       for (const toolCall of response.toolCalls) {
+        // 检查累计工具调用次数
+        if (totalToolCalls >= maxTotalToolCalls) {
+          this.logger.warn(`跳过工具调用：已达上限 [${task.taskId}]`, { totalToolCalls, maxTotalToolCalls });
+          break;
+        }
+
         const toolResult = await this.handleToolCall(
           toolCall,
           task,
           context,
         );
+
+        totalToolCalls++;
 
         // 保存工具结果
         this.sessionManager.addMessage(task.taskId, {
@@ -416,7 +457,7 @@ export class AgentEngine {
       this.eventBus.emit(WorkerClawEvent.TASK_PROGRESS, {
         taskId: task.taskId,
         progress: Math.min(20 + round * 15, 90),
-        message: `已完成 ${response.toolCalls.length} 个工具调用`,
+        message: `已完成 ${totalToolCalls} 个工具调用`,
       });
     }
 
@@ -470,7 +511,7 @@ export class AgentEngine {
         workDir: this.config.security.sandbox.workDir,
         remainingMs: context.timeoutMs - (Date.now() - context.receivedAt),
         toolCallCount: 0,
-        maxToolCalls: 20,
+        maxToolCalls: this.config.security?.contentScan?.resourceExhaustion?.maxToolCallsPerTask || 20,
         botId: this.config.platform?.botId || '',
         ownerId: this.config.platform?.ownerId || null,
       };

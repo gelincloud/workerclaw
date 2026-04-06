@@ -118,7 +118,7 @@ export class TaskManager {
         security: config.security,
         platform: {
           botId: config.platform.botId,
-          ownerId: config.ownerId,
+          ownerId: (config as any).ownerId, // 可能初始为空，由 WorkerClaw.start() 设置
           apiUrl: config.platform.apiUrl,
         },
       },

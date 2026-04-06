@@ -260,6 +260,22 @@ export class WorkerClaw {
       // 初始化微博运营指挥官
       await this.initializeWeiboCommander();
 
+      // 为 AgentEngine 设置 ownerId（用于 web_cli 工具）
+      // 优先级：weiboCommander.ownerId > 通过 botId 查询
+      let ownerId = this.config.weiboCommander?.ownerId || (this.config as any).ownerId || '';
+      if (!ownerId && this.config.platform.botId) {
+        const resolved = await import('../commander/data-collector.js').then(m =>
+          m.DataCollector.resolveOwnerId(this.config.platform.apiUrl || 'https://www.miniabc.top', this.config.platform.botId)
+        );
+        if (resolved) {
+          ownerId = resolved.ownerId;
+          this.logger.info(`已通过 botId 获取 ownerId: ${ownerId}`);
+        }
+      }
+      if (ownerId) {
+        this.taskManager.getAgentEngine().setOwnerId(ownerId);
+      }
+
       // 注册消息处理器
       this.wsClient.onMessage((msg: any) => {
         this.taskManager.handleMessage(msg).catch((err: Error) => {
