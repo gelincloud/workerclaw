@@ -270,7 +270,7 @@ export class WeiboCommander {
               prompt: task.prompt,
               schedule: task.schedule,
               enabled: true,
-              maxPerHour: 1,
+              maxPerHour: Math.ceil((task.maxPerDay || 5) / 24), // 动态计算每小时上限
               maxPerDay: task.maxPerDay,
               description: `动态任务 - ${task.type}`,
             });

@@ -191,49 +191,102 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
   },
   {
     id: 'test',
-    name: '测试模板',
-    description: '用于测试API和系统稳定性，每2分钟执行一次',
+    name: '测试运营模板',
+    description: '用于测试微博运营功能，包含发博、互动、回关等实际操作',
     scenario: '开发测试环境',
     tasks: [
+      // ===== 监控类任务（只读，验证API） =====
       {
         id: 'test-check-me',
         type: 'analyze_data',
-        prompt: '【测试任务】检查微博登录态。调用 weibo me 命令验证账号信息，仅返回结果，不做任何操作。',
-        schedule: '*/2 * * *', // 每2分钟执行一次
+        prompt: '【监控任务】检查微博登录态和账号信息。调用 weibo me 命令验证账号状态，返回粉丝数、微博数等信息。',
+        schedule: '*/10 * * *', // 每10分钟
         enabled: true,
         source: 'template',
-        priority: 5,
-        maxPerDay: 30, // 每天最多30次
+        priority: 3,
+        maxPerDay: 144, // 每10分钟 = 144次/天
       },
       {
         id: 'test-browse-trends',
         type: 'browse_trends',
-        prompt: '【测试任务】获取微博热搜榜。调用 weibo hot_search 命令获取当前热搜，仅记录前5条，不做任何操作。',
-        schedule: '*/2 * * *', // 每2分钟执行一次
+        prompt: '【监控任务】获取微博热搜榜。调用 weibo hot_search 命令获取当前热搜前10条，记录热点话题，为后续发博做准备。',
+        schedule: '*/30 * * *', // 每30分钟
         enabled: true,
         source: 'template',
-        priority: 5,
-        maxPerDay: 30,
+        priority: 4,
+        maxPerDay: 48,
       },
       {
         id: 'test-check-mentions',
         type: 'check_mentions',
-        prompt: '【测试任务】检查微博@提及。调用 weibo mentions 命令查看是否有新@，仅记录数量，不做任何操作。',
-        schedule: '*/2 * * *', // 每2分钟执行一次
+        prompt: '【监控任务】检查微博@提及。调用 weibo mentions 命令查看是否有新的@，如有则返回详细信息（用户、内容、时间）。',
+        schedule: '*/15 * * *', // 每15分钟
         enabled: true,
         source: 'template',
         priority: 5,
-        maxPerDay: 30,
+        maxPerDay: 96,
       },
+      {
+        id: 'test-check-dm',
+        type: 'check_dm',
+        prompt: '【监控任务】检查微博私信。调用 weibo messages 命令查看是否有新私信，如有则返回详细信息。',
+        schedule: '*/20 * * *', // 每20分钟
+        enabled: true,
+        source: 'template',
+        priority: 5,
+        maxPerDay: 72,
+      },
+
+      // ===== 运营类任务（实际操作） =====
       {
         id: 'test-post-weibo',
         type: 'post_content',
-        prompt: '【测试任务】发布微博测试。调用 weibo post 命令发布一条测试微博，内容为"WorkerClaw系统测试 - [当前时间]"，验证发微博API是否正常工作。',
-        schedule: '*/2 * * *', // 每2分钟执行一次
+        prompt: '【运营任务】发布微博。查看当前热搜，选择一个有趣的话题，发表简短评论（50-100字）。要求：观点新颖、语气轻松，可以加emoji。发布后返回微博ID。',
+        schedule: '0 */2 * *', // 每2小时
+        enabled: true,
+        source: 'template',
+        priority: 8,
+        maxPerDay: 12, // 每天最多12条
+      },
+      {
+        id: 'test-reply-comments',
+        type: 'reply_comments',
+        prompt: '【运营任务】回复微博评论。检查最新微博的评论，选择2-3条有意义的评论进行回复。要求：友好、专业，回复长度20-50字。如无评论则跳过。',
+        schedule: '30 */3 * *', // 每3小时半点
+        enabled: true,
+        source: 'template',
+        priority: 7,
+        maxPerDay: 8,
+      },
+      {
+        id: 'test-reply-mentions',
+        type: 'reply_comments',
+        prompt: '【运营任务】回复@提及。检查是否有新的@提及，如有则进行回复互动。要求：感谢关注、礼貌回应，回复长度20-50字。如无@则跳过。',
+        schedule: '45 */2 * *', // 每2小时45分
+        enabled: true,
+        source: 'template',
+        priority: 6,
+        maxPerDay: 12,
+      },
+      {
+        id: 'test-follow-back',
+        type: 'follow_back',
+        prompt: '【运营任务】回关新粉丝。检查今天的新粉丝，选择1-2个有质量的账号进行回关。要求：优先回关活跃度高、有内容的账号，最多回关2个。',
+        schedule: '0 12,20 * *', // 每天12点和20点
         enabled: true,
         source: 'template',
         priority: 5,
-        maxPerDay: 30,
+        maxPerDay: 4,
+      },
+      {
+        id: 'test-like-interactions',
+        type: 'like_posts',
+        prompt: '【运营任务】点赞互动。检查最近的@提及和评论，给有意义的互动点赞以表示感谢。要求：最多点赞5条互动内容。',
+        schedule: '15 */4 * *', // 每4小时15分
+        enabled: true,
+        source: 'template',
+        priority: 4,
+        maxPerDay: 6,
       },
     ],
   },
