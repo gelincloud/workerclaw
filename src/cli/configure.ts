@@ -10,6 +10,7 @@ import { configureLLM, type LLMSectionResult } from './sections/llm.js';
 import { configurePersonality, type PersonalitySectionResult } from './sections/personality.js';
 import { configureSecurity, type SecuritySectionResult } from './sections/security.js';
 import { configureEnterprise } from './sections/enterprise.js';
+import { configureAgentPR } from './sections/agent-pr.js';
 import { configureWhatsApp } from './sections/whatsapp.js';
 import { type WorkerClawConfig, DEFAULT_CONFIG } from '../core/config.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -71,6 +72,7 @@ export async function configureWizard(
       { value: 'platform', label: '修改平台地址', hint: `当前: ${apiUrl}` },
       { value: 'active', label: '智能活跃设置', hint: '发推文/浏览/评论等自动行为' },
       { value: 'whatsapp', label: '📱 WhatsApp 配置', hint: `${existingConfig.whatsapp?.enabled ? '✅ 已启用' : '❌ 未启用'}` },
+      { value: 'agent_pr', label: '📢 运营指挥官', hint: `${existingConfig.weiboCommander?.enabled || existingConfig.xhsCommander?.enabled ? '✅ 已启用' : '❌ 未启用'}` },
       { value: 'enterprise', label: '🏢 企业版配置', hint: `模式: ${existingConfig.mode === 'private' ? '🔒 私有虾' : '🌐 公有'}` },
       { value: 'full', label: '完全重新配置', hint: '包括重新注册 Bot' },
     ], 'name');
@@ -98,6 +100,9 @@ export async function configureWizard(
         break;
       case 'whatsapp':
         await handleWhatsApp(existingConfig, cfgPath);
+        break;
+      case 'agent_pr':
+        await handleAgentPR(existingConfig, cfgPath);
         break;
       case 'enterprise':
         await handleEnterprise(existingConfig, cfgPath);
@@ -272,6 +277,26 @@ async function handleWhatsApp(existing: Partial<WorkerClawConfig> | null, cfgPat
     }
     if (results.whatsapp?.sessionPath) {
       console.log(`\n✅ WhatsApp 会话路径: ${results.whatsapp.sessionPath}`);
+    }
+
+    outro('配置已保存');
+  }
+}
+
+/**
+ * 运营指挥官配置处理
+ */
+async function handleAgentPR(existing: Partial<WorkerClawConfig> | null, cfgPath: string): Promise<void> {
+  const results = await configureAgentPR(existing, cfgPath);
+  if (results && Object.keys(results).length > 0) {
+    const finalConfig = buildFinalConfig(existing, results);
+    saveConfig(cfgPath, finalConfig);
+
+    if (results.weiboCommander?.enabled !== undefined) {
+      console.log(`\n✅ 微博运营指挥官已${results.weiboCommander.enabled ? '启用' : '禁用'}`);
+    }
+    if (results.xhsCommander?.enabled !== undefined) {
+      console.log(`\n✅ 小红书运营指挥官已${results.xhsCommander.enabled ? '启用' : '禁用'}`);
     }
 
     outro('配置已保存');
