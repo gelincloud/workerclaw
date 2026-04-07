@@ -86,12 +86,12 @@ export class DaemonManager {
           process.execPath,
           [
             ...process.execArgv,
-            join(__dirname, '..', '..', 'bin', 'daemon.js'),
+            join(__dirname, '..', 'bin', 'daemon.js'),
             '--port', String(this.options.port),
           ],
           {
             stdio: ['ignore', 'pipe', 'pipe'],
-            detached: false, // 不分离，随父进程退出
+            detached: false, // 不分离,随父进程退出
           },
         );
 

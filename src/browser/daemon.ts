@@ -354,6 +354,27 @@ export class BrowserBridgeDaemon {
 
 // ==================== CLI 入口 ====================
 
+/**
+ * 启动 Daemon（便捷函数）
+ */
+export async function startDaemon(port: number, host: string = 'localhost'): Promise<void> {
+  const daemon = new BrowserBridgeDaemon({ port, host });
+  await daemon.start();
+  
+  // 处理进程信号
+  process.on('SIGINT', async () => {
+    console.log('\n[Bridge Daemon] 收到 SIGINT，正在停止...');
+    await daemon.stop();
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', async () => {
+    console.log('\n[Bridge Daemon] 收到 SIGTERM，正在停止...');
+    await daemon.stop();
+    process.exit(0);
+  });
+}
+
 export async function runDaemon(config: DaemonConfig = {}): Promise<BrowserBridgeDaemon> {
   const daemon = new BrowserBridgeDaemon(config);
   await daemon.start();
