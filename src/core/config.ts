@@ -264,8 +264,8 @@ export interface WeiboCommanderConfig {
 export interface XhsCommanderConfig {
   /** 是否启用 */
   enabled: boolean;
-  /** 塘主ID（用于获取小红书凭据） */
-  ownerId: string;
+  /** 塘主ID（可选，不填则通过 botId 自动获取） */
+  ownerId?: string;
   /** 平台 API URL */
   platformApiUrl?: string;
   /** 数据采集配置 */

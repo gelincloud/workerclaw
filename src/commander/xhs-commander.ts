@@ -71,7 +71,7 @@ export class XhsCommander {
     // 初始化子模块
     this.dataCollector = new XhsDataCollector(
       platformConfig.apiUrl || 'https://www.miniabc.top',
-      config.ownerId,
+      config.ownerId || '', // 在 workerclaw.ts 中已确保 ownerId 有值
       dataDir
     );
 
