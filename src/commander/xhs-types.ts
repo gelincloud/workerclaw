@@ -272,6 +272,8 @@ export interface XhsCommanderConfig {
   enabled: boolean;
   /** 塘主ID（用于获取小红书凭据） */
   ownerId: string;
+  /** 平台 API URL */
+  platformApiUrl?: string;
   /** 数据采集配置 */
   collection: XhsDataCollectionConfig;
   /** 自动化配置 */

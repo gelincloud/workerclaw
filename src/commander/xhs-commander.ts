@@ -100,6 +100,20 @@ export class XhsCommander {
   }
 
   /**
+   * 设置 AgentEngine（用于执行任务）
+   */
+  setAgentEngine(engine: AgentEngine): void {
+    this.agentEngine = engine;
+  }
+
+  /**
+   * 设置任务调度器
+   */
+  setRecurringTaskScheduler(scheduler: RecurringTaskScheduler): void {
+    this.scheduler = scheduler;
+  }
+
+  /**
    * 绑定调度器和 Agent 引擎
    */
   attachSchedulerAndEngine(scheduler: RecurringTaskScheduler, agentEngine: AgentEngine): void {

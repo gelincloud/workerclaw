@@ -259,6 +259,45 @@ export interface WeiboCommanderConfig {
   dataDir?: string;
 }
 
+// ==================== 小红书运营指挥官配置 ====================
+
+export interface XhsCommanderConfig {
+  /** 是否启用 */
+  enabled: boolean;
+  /** 塘主ID（用于获取小红书凭据） */
+  ownerId: string;
+  /** 平台 API URL */
+  platformApiUrl?: string;
+  /** 数据采集配置 */
+  collection: {
+    /** 采集间隔 (ms)，默认 30分钟 */
+    intervalMs?: number;
+    /** 是否采集热门推荐 */
+    collectHotFeed?: boolean;
+    /** 是否采集互动数据 */
+    collectInteractions?: boolean;
+  };
+  /** 自动化配置 */
+  automation: {
+    /** 是否启用自动发布 */
+    autoPost?: boolean;
+    /** 是否启用自动回复 */
+    autoReply?: boolean;
+    /** 是否启用自动关注 */
+    autoFollow?: boolean;
+    /** 每日最大发布数 */
+    maxPostsPerDay?: number;
+    /** 每日最大回复数 */
+    maxRepliesPerDay?: number;
+    /** 是否需要在执行前确认 */
+    requireConfirmation?: boolean;
+  };
+  /** 运营模板 ID */
+  templateId?: string;
+  /** 数据存储目录 */
+  dataDir?: string;
+}
+
 // ==================== 完整配置 ====================
 
 export interface ActiveBehaviorConfig {
@@ -337,6 +376,8 @@ export interface WorkerClawConfig {
   recurringTasks?: import('../scheduler/recurring-task-scheduler.js').RecurringTaskSchedulerConfig;
   /** 微博运营指挥官配置（私有虾专用） */
   weiboCommander?: WeiboCommanderConfig;
+  /** 小红书运营指挥官配置（私有虾专用） */
+  xhsCommander?: XhsCommanderConfig;
   /** WhatsApp 集成配置 */
   whatsapp?: WhatsAppConfig;
 }

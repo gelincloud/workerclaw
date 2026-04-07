@@ -13,11 +13,12 @@ import { BehaviorScheduler, type BehaviorCallbacks } from '../active-behavior/in
 import { getBuiltinSkills } from '../skills/index.js';
 import { ExperienceManager, DEFAULT_EXPERIENCE_CONFIG } from '../experience/index.js';
 import { RecurringTaskScheduler, DEFAULT_SCHEDULER_CONFIG } from '../scheduler/index.js';
-import { WeiboCommander } from '../commander/index.js';
+import { WeiboCommander, XhsCommander } from '../commander/index.js';
 import type { WorkerClawConfig } from './config.js';
 import type { ExperienceConfig } from '../experience/types.js';
 import type { RecurringTaskSchedulerConfig } from '../scheduler/recurring-task-scheduler.js';
 import type { WeiboCommanderConfig } from '../commander/types.js';
+import type { XhsCommanderConfig } from '../commander/xhs-types.js';
 
 // ==================== WorkerClaw 主类 ====================
 
@@ -33,6 +34,7 @@ export class WorkerClaw {
   private experienceManager: ExperienceManager | null = null;
   private recurringTaskScheduler: RecurringTaskScheduler | null = null;
   private weiboCommander: WeiboCommander | null = null;
+  private xhsCommander: XhsCommander | null = null;
 
   private isRunning = false;
 
@@ -199,10 +201,77 @@ export class WorkerClaw {
     
     // 注入 AgentEngine 供指挥官调用
     this.weiboCommander.setAgentEngine(this.taskManager.getAgentEngine());
-    
+
     // 将指挥官的定时任务注入调度器
     if (this.recurringTaskScheduler) {
       this.weiboCommander.setRecurringTaskScheduler(this.recurringTaskScheduler);
+    }
+  }
+
+  /**
+   * 初始化小红书运营指挥官（异步方法）
+   * 需要在 start() 中调用
+   */
+  private async initializeXhsCommander(): Promise<void> {
+    const config = this.config;
+
+    // 私有虾模式下，如果配置了 xhsCommander.enabled，则自动启动指挥官
+    if (!config.xhsCommander?.enabled || config.mode !== 'private') {
+      return;
+    }
+
+    // 自动获取 ownerId（优先级：配置 → 绑定关系查询）
+    let ownerId = config.xhsCommander.ownerId || (config as any).ownerId || '';
+
+    if (!ownerId && config.platform.botId) {
+      // 配置中没有 ownerId，尝试通过 botId 查询绑定关系
+      this.logger.info('[XhsCommander] 配置中缺少 ownerId，尝试通过 botId 查询绑定关系...');
+      const resolved = await import('../commander/data-collector.js').then(m =>
+        m.DataCollector.resolveOwnerId(config.platform.apiUrl || 'https://www.miniabc.top', config.platform.botId)
+      );
+      if (resolved) {
+        ownerId = resolved.ownerId;
+        this.logger.info(`[XhsCommander] 已通过 botId 获取 ownerId: ${ownerId}`);
+      } else {
+        this.logger.error('[XhsCommander] 无法获取 ownerId，XhsCommander 启动失败');
+        return;
+      }
+    }
+
+    const xhsConfig: XhsCommanderConfig = {
+      enabled: true,
+      ownerId: ownerId,
+      platformApiUrl: config.platform.apiUrl || 'https://www.miniabc.top',
+      collection: {
+        intervalMs: config.xhsCommander.collection?.intervalMs || 30 * 60 * 1000,
+        hotFeedIntervalMs: 60 * 60 * 1000,
+        historyRetentionDays: 30,
+        collectHotFeed: config.xhsCommander.collection?.collectHotFeed ?? true,
+        collectInteractions: config.xhsCommander.collection?.collectInteractions ?? true,
+      },
+      automation: {
+        autoPost: config.xhsCommander.automation?.autoPost ?? true,
+        autoReply: config.xhsCommander.automation?.autoReply ?? true,
+        autoFollow: config.xhsCommander.automation?.autoFollow ?? false,
+        maxPostsPerDay: config.xhsCommander.automation?.maxPostsPerDay || 4,
+        maxRepliesPerDay: config.xhsCommander.automation?.maxRepliesPerDay || 20,
+        requireConfirmation: config.xhsCommander.automation?.requireConfirmation ?? false,
+      },
+      templateId: config.xhsCommander.templateId || 'standard',
+    };
+
+    this.xhsCommander = new XhsCommander(
+      xhsConfig,
+      config.platform,
+      config.llm,
+    );
+
+    // 注入 AgentEngine 供指挥官调用
+    this.xhsCommander.setAgentEngine(this.taskManager.getAgentEngine());
+
+    // 将指挥官的定时任务注入调度器
+    if (this.recurringTaskScheduler) {
+      this.xhsCommander.setRecurringTaskScheduler(this.recurringTaskScheduler);
     }
   }
 
@@ -262,6 +331,9 @@ export class WorkerClaw {
 
       // 初始化微博运营指挥官
       await this.initializeWeiboCommander();
+
+      // 初始化小红书运营指挥官
+      await this.initializeXhsCommander();
 
       // 为 AgentEngine 设置 ownerId（用于 web_cli 工具）
       // 优先级：weiboCommander.ownerId > 通过 botId 查询
