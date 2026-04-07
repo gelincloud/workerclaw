@@ -1032,6 +1032,10 @@ export function getWebCliToolDefinition(platformUrl?: string): ToolDefinition {
 - 平台通过塘主预先同步的 Cookie 自动注入登录态，Agent 只需提供业务参数（如微博内容、搜索关键词等）。
 - 如果 auth 命令执行失败并提示"未配置登录态"或"登录态已过期"，才需要告知用户通过 Chrome 扩展同步凭据。
 
+**重要：错误码说明**
+- HTTP 432 是微博移动端接口的频率限制错误，不是登录态问题！fetch 策略的命令（如 weibo/search, weibo/hot_search）可能返回此错误，表示请求过于频繁，应稍后重试。
+- 只有 auth 策略命令返回 401/403 时才是登录态过期。
+
 **微博 PR 能力**：
 - weibo/hot_search: 获取微博热搜榜（fetch, 公开），可用于结合热搜话题生成自然推广文案
 - weibo/search: 搜索微博内容（fetch, 公开）
