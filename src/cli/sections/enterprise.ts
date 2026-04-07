@@ -11,6 +11,7 @@
 import { intro, outro, select, confirm, text, password, spinner } from '../prompter.js';
 import { verifyLicense, activateLicenseKey, isEnterpriseActivated, type LicenseVerifyResult } from '../license.js';
 import { configureAgentPR } from './agent-pr.js';
+import { configureWhatsApp } from './whatsapp.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_PLATFORM_URL, DEFAULT_CONFIG_PATH, WORKERCLAW_DIR } from '../configure.js';
@@ -37,6 +38,7 @@ export async function configureEnterprise(existing: any, cfgPath: string): Promi
     { value: 'license', label: '激活企业版 License', hint: enterpriseActive ? '已激活' : '解锁专属知识和媒体库' },
     { value: 'knowledge', label: '配置专属知识', hint: existing?.personality?.customSystemPrompt ? '已设置' : '注入到系统提示中' },
     { value: 'media', label: '配置媒体资料库', hint: existing?.mediaDir ? existing.mediaDir : '设置本地媒体目录' },
+    { value: 'whatsapp', label: '📱 WhatsApp 配置', hint: `${existing?.whatsapp?.enabled ? '✅ 已启用' : '❌ 未启用'}` },
     { value: 'agent_pr', label: '📢 运营指挥官', hint: `${existing?.weiboCommander?.enabled || existing?.xhsCommander?.enabled ? '✅ 已启用' : '❌ 未启用'}` },
   ], 'mode');
 
@@ -54,6 +56,8 @@ export async function configureEnterprise(existing: any, cfgPath: string): Promi
       return await configureKnowledge(existing, cfgPath);
     case 'media':
       return await configureMediaDir(existing, cfgPath);
+    case 'whatsapp':
+      return await configureWhatsApp(existing, cfgPath);
     case 'agent_pr':
       return await configureAgentPR(existing, cfgPath);
   }
