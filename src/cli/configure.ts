@@ -506,6 +506,10 @@ function buildFinalConfig(
       ...DEFAULT_CONFIG.activeBehavior,
       ...existing?.activeBehavior,
     },
+    // 运营指挥官配置
+    weiboCommander: (newValues as any).weiboCommander || existing?.weiboCommander,
+    xhsCommander: (newValues as any).xhsCommander || existing?.xhsCommander,
+    douyinCommander: (newValues as any).douyinCommander || existing?.douyinCommander,
   } as WorkerClawConfig;
 }
 
