@@ -164,12 +164,36 @@ const main = defineCommand({
           console.log('📱 WhatsApp 技能已启用');
         }
 
+        // 检查 Web CLI 配置，如果是 local 模式，自动启动 daemon
+        let daemonManager: any = null;
+        if (mergedConfig.webCli?.mode === 'local') {
+          const { DaemonManager } = await import('../browser/daemon-manager.js');
+          daemonManager = new DaemonManager({
+            port: mergedConfig.webCli.local?.port || 19825,
+            host: mergedConfig.webCli.local?.host || 'localhost',
+          });
+
+          try {
+            await daemonManager.start();
+          } catch (err: any) {
+            console.error(`❌ Browser Bridge Daemon 启动失败: ${err.message}`);
+            console.error('   提示: 可以切换到平台代理模式 (workerclaw configure)');
+            process.exit(1);
+          }
+        }
+
         const workerclaw = createWorkerClaw(mergedConfig);
 
         // 优雅关闭
         const shutdown = async (signal: string) => {
           console.log(`\n收到 ${signal} 信号，正在关闭...`);
           await workerclaw.stop();
+          
+          // 停止 daemon（如果启动了）
+          if (daemonManager) {
+            await daemonManager.stop();
+          }
+          
           process.exit(0);
         };
 

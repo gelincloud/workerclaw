@@ -335,6 +335,24 @@ export interface DouyinCommanderConfig {
   dataDir?: string;
 }
 
+// ==================== Web CLI 配置 ====================
+
+export interface WebCliConfig {
+  /** 模式: platform (平台代理) | local (本机浏览器) */
+  mode: 'platform' | 'local';
+  /** 平台 API URL（platform 模式） */
+  platformUrl?: string;
+  /** 本地 Daemon 配置（local 模式） */
+  local?: {
+    /** Daemon 端口，默认 19825 */
+    port?: number;
+    /** Daemon 主机，默认 localhost */
+    host?: string;
+    /** 连接超时（毫秒），默认 30000 */
+    timeout?: number;
+  };
+}
+
 // ==================== 知乎运营指挥官配置 ====================
 
 export interface ZhihuCommanderConfig {
@@ -475,6 +493,8 @@ export interface WorkerClawConfig {
   douyinCommander?: DouyinCommanderConfig;
   /** 知乎运营指挥官配置（私有虾专用） */
   zhihuCommander?: ZhihuCommanderConfig;
+  /** Web CLI 配置（本地 Browser Bridge 或平台代理） */
+  webCli?: WebCliConfig;
   /** WhatsApp 集成配置 */
   whatsapp?: WhatsAppConfig;
 }

@@ -10,6 +10,7 @@ import { configureLLM, type LLMSectionResult } from './sections/llm.js';
 import { configurePersonality, type PersonalitySectionResult } from './sections/personality.js';
 import { configureSecurity, type SecuritySectionResult } from './sections/security.js';
 import { configureEnterprise } from './sections/enterprise.js';
+import { configureWebCli, type WebCliSectionResult, quickToggleWebCli } from './sections/webcli.js';
 import { type WorkerClawConfig, DEFAULT_CONFIG } from '../core/config.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -26,7 +27,7 @@ export const WORKERCLAW_DIR = join(homedir(), '.workerclaw');
 export const DEFAULT_CONFIG_PATH = join(WORKERCLAW_DIR, 'config.json');
 
 /** 配置区域 */
-type ConfigSection = 'platform' | 'llm' | 'personality' | 'security' | 'skills' | 'enterprise';
+type ConfigSection = 'platform' | 'llm' | 'personality' | 'security' | 'skills' | 'enterprise' | 'webcli';
 
 /**
  * 交互式配置向导
@@ -68,6 +69,7 @@ export async function configureWizard(
       { value: 'llm', label: '修改大模型配置', hint: `当前: ${llmModel}` },
       { value: 'api_key', label: '修改 API Key', hint: 'LLM / 平台 Token' },
       { value: 'platform', label: '修改平台地址', hint: `当前: ${apiUrl}` },
+      { value: 'webcli', label: '🌐 Web CLI 模式', hint: `当前: ${existingConfig.webCli?.mode === 'local' ? '本地桥接' : '平台代理'}` },
       { value: 'active', label: '智能活跃设置', hint: '发推文/浏览/评论等自动行为' },
       { value: 'enterprise', label: '🏢 企业版配置', hint: `模式: ${existingConfig.mode === 'private' ? '🔒 私有虾' : '🌐 公有'}` },
       { value: 'full', label: '完全重新配置', hint: '包括重新注册 Bot' },
@@ -90,6 +92,9 @@ export async function configureWizard(
         break;
       case 'platform':
         await quickChangePlatform(existingConfig, cfgPath);
+        break;
+      case 'webcli':
+        await quickChangeWebCli(existingConfig, cfgPath);
         break;
       case 'active':
         await quickToggleActive(existingConfig, cfgPath);
@@ -214,6 +219,21 @@ async function quickChangePlatform(existing: Partial<WorkerClawConfig> | null, c
   console.log(`   API: ${currentApiUrl} → ${newApiUrl.replace(/\/$/, '')}`);
   console.log(`   WS:  ${currentWsUrl} → ${newWsUrl.replace(/\/$/, '')}`);
 
+  outro('配置已保存');
+}
+
+/**
+ * 快捷切换 Web CLI 模式
+ */
+async function quickChangeWebCli(existing: Partial<WorkerClawConfig> | null, cfgPath: string): Promise<void> {
+  const result = await quickToggleWebCli(existing?.webCli);
+  if (!result) {
+    outro('未修改');
+    return;
+  }
+
+  const finalConfig = buildFinalConfig(existing, { webCli: result } as any);
+  saveConfig(cfgPath, finalConfig);
   outro('配置已保存');
 }
 
@@ -511,6 +531,8 @@ function buildFinalConfig(
     xhsCommander: (newValues as any).xhsCommander || existing?.xhsCommander,
     douyinCommander: (newValues as any).douyinCommander || existing?.douyinCommander,
     zhihuCommander: (newValues as any).zhihuCommander || existing?.zhihuCommander,
+    // Web CLI 配置
+    webCli: (newValues as any).webCli || existing?.webCli,
   } as WorkerClawConfig;
 }
 
