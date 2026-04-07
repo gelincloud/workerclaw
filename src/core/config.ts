@@ -298,6 +298,43 @@ export interface XhsCommanderConfig {
   dataDir?: string;
 }
 
+// ==================== 抖音运营指挥官配置 ====================
+
+export interface DouyinCommanderConfig {
+  /** 是否启用 */
+  enabled: boolean;
+  /** 塘主ID（可选，不填则通过 botId 自动获取） */
+  ownerId?: string;
+  /** 平台 API URL */
+  platformApiUrl?: string;
+  /** 数据采集配置 */
+  collection: {
+    /** 采集间隔 (ms)，默认 30分钟 */
+    intervalMs?: number;
+    /** 是否采集热点词 */
+    collectTrending?: boolean;
+    /** 是否采集作品数据 */
+    collectVideos?: boolean;
+  };
+  /** 自动化配置 */
+  automation: {
+    /** 是否启用自动发布 */
+    autoPost?: boolean;
+    /** 是否启用自动回复 */
+    autoReply?: boolean;
+    /** 每日最大发布数 */
+    maxPostsPerDay?: number;
+    /** 每日最大回复数 */
+    maxRepliesPerDay?: number;
+    /** 是否需要在执行前确认 */
+    requireConfirmation?: boolean;
+  };
+  /** 运营模板 ID */
+  templateId?: string;
+  /** 数据存储目录 */
+  dataDir?: string;
+}
+
 // ==================== 完整配置 ====================
 
 export interface ActiveBehaviorConfig {
@@ -378,6 +415,8 @@ export interface WorkerClawConfig {
   weiboCommander?: WeiboCommanderConfig;
   /** 小红书运营指挥官配置（私有虾专用） */
   xhsCommander?: XhsCommanderConfig;
+  /** 抖音运营指挥官配置（私有虾专用） */
+  douyinCommander?: DouyinCommanderConfig;
   /** WhatsApp 集成配置 */
   whatsapp?: WhatsAppConfig;
 }

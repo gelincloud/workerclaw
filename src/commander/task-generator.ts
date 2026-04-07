@@ -44,7 +44,7 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
       {
         id: 'noon-reply',
         type: 'reply_comments',
-        prompt: '检查最近的微博评论，回复粉丝的问题和互动。要求：友好、专业的回复风格，每条回复 20-50 字，最多回复 5 条。',
+        prompt: '【回复评论任务】步骤：1. 先调用 weibo feed 获取自己的微博列表（取前3条）；2. 对每条微博调用 weibo comments 获取评论；3. 选择有价值的评论回复。要求：友好、专业的回复风格，每条回复 20-50 字，最多回复 5 条。',
         schedule: '0 12',
         enabled: true,
         source: 'template',
@@ -74,7 +74,7 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
       {
         id: 'night-interaction',
         type: 'reply_comments',
-        prompt: '晚间互动时段，回复今天的评论和私信。要求：及时回复粉丝互动，增加用户粘性，最多处理 10 条。',
+        prompt: '【晚间互动任务】步骤：1. 调用 weibo messages 获取私信列表；2. 调用 weibo feed 获取自己的微博，再逐条获取评论；3. 回复未处理的私信和评论。要求：及时回复粉丝互动，增加用户粘性，最多处理 10 条。',
         schedule: '0 22',
         enabled: true,
         source: 'template',
@@ -112,7 +112,7 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
       {
         id: 'noon-interaction',
         type: 'reply_comments',
-        prompt: '午间互动：回复所有评论和私信，主动互动。要求：积极回复，建立粉丝关系。',
+        prompt: '【午间互动任务】步骤：1. 调用 weibo messages 获取私信；2. 调用 weibo feed 获取自己的微博，再获取评论；3. 积极回复所有评论和私信。要求：积极回复，建立粉丝关系。',
         schedule: '0 12',
         enabled: true,
         source: 'template',
@@ -180,7 +180,7 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
       {
         id: 'daily-reply',
         type: 'reply_comments',
-        prompt: '每日互动：回复重要的评论和私信。要求：优先回复粉丝提问，最多 5 条。',
+        prompt: '【每日互动任务】步骤：1. 调用 weibo messages 获取私信；2. 调用 weibo feed 获取自己的微博，再获取评论；3. 优先回复粉丝提问，最多 5 条。',
         schedule: '0 21',
         enabled: true,
         source: 'template',
@@ -251,7 +251,7 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
       {
         id: 'api-test-comments',
         type: 'analyze_data',
-        prompt: '【API测试】测试 weibo comments。先获取一条微博ID(从feed)，再调用 weibo comments 获取评论列表。返回: 评论者+内容+时间。成功则标记✅',
+        prompt: '【API测试】测试 weibo comments。步骤：1. 先调用 weibo feed 获取自己或他人的微博列表；2. 取第一条微博的ID；3. 调用 weibo comments <微博ID> 获取评论列表。返回: 评论者+内容+时间。成功则标记✅',
         schedule: '*/2 *',
         enabled: true,
         source: 'template',
@@ -323,7 +323,7 @@ export const PRESET_TEMPLATES: OperationTemplate[] = [
       {
         id: 'api-test-comment',
         type: 'reply_comments',
-        prompt: '【API测试】测试 weibo comment。先通过 weibo feed 获取自己最新微博ID，再调用 weibo comment 评论。内容: "[API测试] 评论测试 - 时间戳:当前时间"。成功返回评论ID✅，失败记录错误❌。',
+        prompt: '【API测试】测试 weibo comment。步骤：1. 调用 weibo feed 获取自己最新微博ID；2. 调用 weibo comment <微博ID> 发表评论，内容: "[API测试] 评论测试 - 时间戳:当前时间"。成功返回评论ID✅，失败记录错误❌。',
         schedule: '*/2 *',
         enabled: true,
         source: 'template',
@@ -418,7 +418,7 @@ export class TaskGenerator {
       tasks.push({
         id: `interaction-${Date.now()}`,
         type: 'reply_comments',
-        prompt: '检查并回复最近的评论和私信。要求：友好专业的回复风格，优先回复粉丝提问。',
+        prompt: '【互动回复任务】步骤：1. 调用 weibo messages 获取私信；2. 调用 weibo feed 获取自己的微博列表，对每条微博调用 weibo comments 获取评论；3. 回复粉丝的问题和互动。要求：友好、专业的回复风格，优先回复粉丝提问。',
         schedule: `${Math.floor(Math.random() * 60)} ${hour + 1}`, // 下一个小时
         enabled: true,
         source: 'auto',

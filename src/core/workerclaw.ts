@@ -14,11 +14,13 @@ import { getBuiltinSkills } from '../skills/index.js';
 import { ExperienceManager, DEFAULT_EXPERIENCE_CONFIG } from '../experience/index.js';
 import { RecurringTaskScheduler, DEFAULT_SCHEDULER_CONFIG } from '../scheduler/index.js';
 import { WeiboCommander, XhsCommander } from '../commander/index.js';
+import { DouyinCommander } from '../commander/douyin-commander.js';
 import type { WorkerClawConfig } from './config.js';
 import type { ExperienceConfig } from '../experience/types.js';
 import type { RecurringTaskSchedulerConfig } from '../scheduler/recurring-task-scheduler.js';
 import type { WeiboCommanderConfig } from '../commander/types.js';
 import type { XhsCommanderConfig } from '../commander/xhs-types.js';
+import type { DouyinCommanderConfig } from '../commander/douyin-types.js';
 
 // ==================== WorkerClaw 主类 ====================
 
@@ -35,6 +37,7 @@ export class WorkerClaw {
   private recurringTaskScheduler: RecurringTaskScheduler | null = null;
   private weiboCommander: WeiboCommander | null = null;
   private xhsCommander: XhsCommander | null = null;
+  private douyinCommander: DouyinCommander | null = null;
 
   private isRunning = false;
 
@@ -276,6 +279,76 @@ export class WorkerClaw {
   }
 
   /**
+   * 初始化抖音运营指挥官
+   */
+  private async initializeDouyinCommander(): Promise<void> {
+    const config = this.config;
+
+    // 私有虾模式下，如果配置了 douyinCommander.enabled，则自动启动指挥官
+    if (!config.douyinCommander?.enabled || config.mode !== 'private') {
+      return;
+    }
+
+    // 自动获取 ownerId（优先级：配置 → 绑定关系查询）
+    let ownerId = config.douyinCommander.ownerId || (config as any).ownerId || '';
+
+    if (!ownerId && config.platform.botId) {
+      // 配置中没有 ownerId，尝试通过 botId 查询绑定关系
+      this.logger.info('[DouyinCommander] 配置中缺少 ownerId，尝试通过 botId 查询绑定关系...');
+      const resolved = await import('../commander/data-collector.js').then(m =>
+        m.DataCollector.resolveOwnerId(config.platform.apiUrl || 'https://www.miniabc.top', config.platform.botId)
+      );
+      if (resolved) {
+        ownerId = resolved.ownerId;
+        this.logger.info(`[DouyinCommander] 已通过 botId 获取 ownerId: ${ownerId}`);
+      } else {
+        this.logger.error('[DouyinCommander] 无法获取 ownerId，DouyinCommander 启动失败');
+        return;
+      }
+    }
+
+    const douyinConfig: DouyinCommanderConfig = {
+      enabled: true,
+      ownerId: ownerId || undefined,
+      platformApiUrl: config.platform.apiUrl || 'https://www.miniabc.top',
+      collection: {
+        intervalMs: config.douyinCommander?.collection?.intervalMs || 30 * 60 * 1000,
+        collectTrending: config.douyinCommander?.collection?.collectTrending !== false,
+        collectVideos: config.douyinCommander?.collection?.collectVideos !== false,
+      },
+      automation: {
+        autoPost: config.douyinCommander?.automation?.autoPost !== false,
+        autoReply: config.douyinCommander?.automation?.autoReply !== false,
+        maxPostsPerDay: config.douyinCommander?.automation?.maxPostsPerDay || 3,
+        maxRepliesPerDay: config.douyinCommander?.automation?.maxRepliesPerDay || 20,
+        requireConfirmation: config.douyinCommander?.automation?.requireConfirmation !== false,
+      },
+      templateId: config.douyinCommander?.templateId || 'standard',
+      dataDir: config.douyinCommander?.dataDir,
+    };
+
+    this.douyinCommander = new DouyinCommander(
+      douyinConfig,
+      config.platform,
+      config.llm
+    );
+
+    this.logger.info('[DouyinCommander] 抖音运营指挥官已初始化');
+
+    // 启动指挥官
+    await this.douyinCommander.start();
+    this.logger.info('[DouyinCommander] 抖音运营指挥官已启动');
+
+    // 注入 AgentEngine 供指挥官调用
+    this.douyinCommander.setAgentEngine(this.taskManager.getAgentEngine());
+
+    // 将指挥官的定时任务注入调度器
+    if (this.recurringTaskScheduler) {
+      this.douyinCommander.setRecurringTaskScheduler(this.recurringTaskScheduler);
+    }
+  }
+
+  /**
    * 启动 WorkerClaw
    */
   async start(): Promise<void> {
@@ -334,6 +407,9 @@ export class WorkerClaw {
 
       // 初始化小红书运营指挥官
       await this.initializeXhsCommander();
+
+      // 初始化抖音运营指挥官
+      await this.initializeDouyinCommander();
 
       // 为 AgentEngine 设置 ownerId（用于 web_cli 工具）
       // 优先级：weiboCommander.ownerId > 通过 botId 查询
