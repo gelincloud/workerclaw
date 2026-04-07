@@ -335,6 +335,62 @@ export interface DouyinCommanderConfig {
   dataDir?: string;
 }
 
+// ==================== 知乎运营指挥官配置 ====================
+
+export interface ZhihuCommanderConfig {
+  /** 是否启用 */
+  enabled: boolean;
+  /** 塘主ID（可选，不填则通过 botId 自动获取） */
+  ownerId?: string;
+  /** 平台 API URL */
+  platformApiUrl?: string;
+  /** 数据采集配置 */
+  collection: {
+    /** 采集间隔 (ms)，默认 30分钟 */
+    intervalMs?: number;
+    /** 热榜采集间隔 (ms)，默认 1小时 */
+    hotIntervalMs?: number;
+    /** 历史数据保留天数，默认 30天 */
+    historyRetentionDays?: number;
+    /** 是否采集热榜 */
+    collectHot?: boolean;
+    /** 是否采集互动数据 */
+    collectInteractions?: boolean;
+  };
+  /** 自动化配置 */
+  automation: {
+    /** 是否启用自动发布文章 */
+    autoPostArticle?: boolean;
+    /** 是否启用自动回答问题 */
+    autoPostAnswer?: boolean;
+    /** 是否启用自动回复评论 */
+    autoReply?: boolean;
+    /** 每日最大发布文章数 */
+    maxArticlesPerDay?: number;
+    /** 每日最大回答数 */
+    maxAnswersPerDay?: number;
+    /** 每日最大回复数 */
+    maxRepliesPerDay?: number;
+    /** 是否需要在执行前确认 */
+    requireConfirmation?: boolean;
+  };
+  /** 运营模板 ID */
+  templateId?: string;
+  /** 自定义任务 */
+  customTasks?: Array<{
+    id: string;
+    type: string;
+    prompt: string;
+    schedule: string;
+    enabled: boolean;
+    source?: string;
+    priority?: number;
+    maxPerDay?: number;
+  }>;
+  /** 数据存储目录 */
+  dataDir?: string;
+}
+
 // ==================== 完整配置 ====================
 
 export interface ActiveBehaviorConfig {
@@ -417,6 +473,8 @@ export interface WorkerClawConfig {
   xhsCommander?: XhsCommanderConfig;
   /** 抖音运营指挥官配置（私有虾专用） */
   douyinCommander?: DouyinCommanderConfig;
+  /** 知乎运营指挥官配置（私有虾专用） */
+  zhihuCommander?: ZhihuCommanderConfig;
   /** WhatsApp 集成配置 */
   whatsapp?: WhatsAppConfig;
 }

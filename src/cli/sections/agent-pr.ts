@@ -6,6 +6,7 @@
  * 1. 微博运营指挥官配置
  * 2. 小红书运营指挥官配置
  * 3. 抖音运营指挥官配置
+ * 4. 知乎运营指挥官配置
  * 
  * 注意：此功能需要企业版 License
  */
@@ -36,6 +37,13 @@ const DOUYIN_TEMPLATES = [
   { id: 'standard', name: '标准运营', desc: '早8/午12/晚20/22 - 适合大多数账号' },
   { id: 'aggressive', name: '激进增长', desc: '高频互动 - 快速涨粉阶段' },
   { id: 'minimal', name: '轻量维护', desc: '每日检查+互动 - 维持活跃度' },
+  { id: 'api_test', name: 'API测试', desc: '测试所有API端点 - 调试用' },
+];
+
+const ZHIHU_TEMPLATES = [
+  { id: 'standard', name: '标准运营', desc: '早8/午12/晚20/22 - 适合大多数账号' },
+  { id: 'aggressive', name: '激进增长', desc: '高频回答(4-6次/天) - 快速涨粉阶段' },
+  { id: 'minimal', name: '轻量维护', desc: '每日1答+回复 - 维持活跃度' },
   { id: 'api_test', name: 'API测试', desc: '测试所有API端点 - 调试用' },
 ];
 
@@ -71,16 +79,19 @@ export async function configureAgentPR(existing: any, cfgPath: string): Promise<
   const weiboEnabled = existing?.weiboCommander?.enabled || false;
   const xhsEnabled = existing?.xhsCommander?.enabled || false;
   const douyinEnabled = existing?.douyinCommander?.enabled || false;
+  const zhihuEnabled = existing?.zhihuCommander?.enabled || false;
 
   console.log(`  微博指挥官: ${weiboEnabled ? '✅ 已启用' : '❌ 未启用'}`);
   console.log(`  小红书指挥官: ${xhsEnabled ? '✅ 已启用' : '❌ 未启用'}`);
   console.log(`  抖音指挥官: ${douyinEnabled ? '✅ 已启用' : '❌ 未启用'}`);
+  console.log(`  知乎指挥官: ${zhihuEnabled ? '✅ 已启用' : '❌ 未启用'}`);
   console.log('');
 
   const choice = await select('选择操作', [
     { value: 'weibo', label: '📱 微博运营指挥官', hint: weiboEnabled ? '已启用' : '配置微博自动化运营' },
     { value: 'xhs', label: '📕 小红书运营指挥官', hint: xhsEnabled ? '已启用' : '配置小红书自动化运营' },
     { value: 'douyin', label: '🎵 抖音运营指挥官', hint: douyinEnabled ? '已启用' : '配置抖音自动化运营' },
+    { value: 'zhihu', label: '🔵 知乎运营指挥官', hint: zhihuEnabled ? '已启用' : '配置知乎自动化运营' },
     { value: 'disable_all', label: '🚫 禁用所有指挥官', hint: '停止所有自动化运营' },
   ], 'weibo');
 
@@ -96,6 +107,8 @@ export async function configureAgentPR(existing: any, cfgPath: string): Promise<
       return await configureXhsCommander(existing, cfgPath);
     case 'douyin':
       return await configureDouyinCommander(existing, cfgPath);
+    case 'zhihu':
+      return await configureZhihuCommander(existing, cfgPath);
     case 'disable_all':
       return await disableAllCommanders(existing);
   }
@@ -492,6 +505,148 @@ async function configureDouyinCommander(existing: any, cfgPath: string): Promise
 }
 
 /**
+ * 知乎运营指挥官配置
+ */
+async function configureZhihuCommander(existing: any, cfgPath: string): Promise<any> {
+  console.log('');
+  console.log('  ━━━ 知乎运营指挥官 ━━━');
+  console.log('  自动采集账号数据、分析运营策略、生成定时任务');
+  console.log('');
+
+  const currentConfig = existing?.zhihuCommander || {};
+  const isEnabled = currentConfig.enabled || false;
+
+  // 是否启用
+  const enable = await confirm(
+    `是否启用知乎运营指挥官？`,
+    isEnabled,
+  );
+
+  if (!enable) {
+    console.log('');
+    console.log('  ✅ 知乎指挥官已禁用');
+    return {
+      zhihuCommander: {
+        ...currentConfig,
+        enabled: false,
+      },
+    };
+  }
+
+  // 选择运营模板
+  console.log('');
+  const currentTemplate = currentConfig.templateId || 'standard';
+  const templateChoice = await select(
+    '选择运营模板',
+    ZHIHU_TEMPLATES.map(t => ({
+      value: t.id,
+      label: t.name,
+      hint: t.desc,
+    })),
+    currentTemplate,
+  );
+
+  // 高级设置
+  const advanced = await confirm('配置高级设置？', false);
+
+  let collection = currentConfig.collection || {
+    intervalMs: 30 * 60 * 1000,
+    hotIntervalMs: 60 * 60 * 1000,
+    historyRetentionDays: 30,
+    collectHot: true,
+    collectInteractions: true,
+  };
+
+  let automation = currentConfig.automation || {
+    autoPostArticle: true,
+    autoPostAnswer: true,
+    autoReply: true,
+    maxArticlesPerDay: 2,
+    maxAnswersPerDay: 5,
+    maxRepliesPerDay: 20,
+    requireConfirmation: false,
+  };
+
+  if (advanced) {
+    console.log('');
+    console.log('  ━━━ 高级设置 ━━━');
+    console.log('');
+
+    // 采集间隔
+    const intervalMinutes = await num(
+      '数据采集间隔（分钟）',
+      (collection.intervalMs || 1800000) / 60000,
+      5,
+      120,
+    );
+    if (intervalMinutes) {
+      collection.intervalMs = intervalMinutes * 60 * 1000;
+    }
+
+    // 每日上限
+    const maxArticles = await num(
+      '每日最大发布文章数',
+      automation.maxArticlesPerDay || 2,
+      1,
+      10,
+    );
+    if (maxArticles !== null) {
+      automation.maxArticlesPerDay = maxArticles;
+    }
+
+    const maxAnswers = await num(
+      '每日最大回答数',
+      automation.maxAnswersPerDay || 5,
+      1,
+      20,
+    );
+    if (maxAnswers !== null) {
+      automation.maxAnswersPerDay = maxAnswers;
+    }
+
+    const maxReplies = await num(
+      '每日最大回复数',
+      automation.maxRepliesPerDay || 20,
+      1,
+      100,
+    );
+    if (maxReplies !== null) {
+      automation.maxRepliesPerDay = maxReplies;
+    }
+
+    // 执行确认
+    automation.requireConfirmation = await confirm(
+      '执行任务前需要确认？',
+      automation.requireConfirmation || false,
+    );
+  }
+
+  // 数据目录
+  const dataDir = currentConfig.dataDir || join(WORKERCLAW_DIR, 'data', 'zhihu-commander');
+  if (!existsSync(dataDir)) {
+    mkdirSync(dataDir, { recursive: true });
+  }
+
+  console.log('');
+  console.log('  ✅ 知乎运营指挥官配置完成');
+  console.log(`     模板: ${ZHIHU_TEMPLATES.find(t => t.id === templateChoice)?.name}`);
+  console.log(`     采集间隔: ${(collection.intervalMs! / 60000).toFixed(0)} 分钟`);
+  console.log(`     每日文章上限: ${automation.maxArticlesPerDay}`);
+  console.log(`     每日回答上限: ${automation.maxAnswersPerDay}`);
+  console.log('');
+
+  return {
+    zhihuCommander: {
+      enabled: true,
+      templateId: templateChoice || currentTemplate,
+      collection,
+      automation,
+      dataDir,
+    },
+  };
+}
+
+/**
  * 禁用所有指挥官
  */
 async function disableAllCommanders(existing: any): Promise<any> {
@@ -518,6 +673,10 @@ async function disableAllCommanders(existing: any): Promise<any> {
     },
     douyinCommander: {
       ...existing?.douyinCommander,
+      enabled: false,
+    },
+    zhihuCommander: {
+      ...existing?.zhihuCommander,
       enabled: false,
     },
   };

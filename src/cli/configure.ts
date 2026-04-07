@@ -510,6 +510,7 @@ function buildFinalConfig(
     weiboCommander: (newValues as any).weiboCommander || existing?.weiboCommander,
     xhsCommander: (newValues as any).xhsCommander || existing?.xhsCommander,
     douyinCommander: (newValues as any).douyinCommander || existing?.douyinCommander,
+    zhihuCommander: (newValues as any).zhihuCommander || existing?.zhihuCommander,
   } as WorkerClawConfig;
 }
 

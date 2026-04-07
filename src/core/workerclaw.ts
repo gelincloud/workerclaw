@@ -15,12 +15,14 @@ import { ExperienceManager, DEFAULT_EXPERIENCE_CONFIG } from '../experience/inde
 import { RecurringTaskScheduler, DEFAULT_SCHEDULER_CONFIG } from '../scheduler/index.js';
 import { WeiboCommander, XhsCommander } from '../commander/index.js';
 import { DouyinCommander } from '../commander/douyin-commander.js';
+import { ZhihuCommander } from '../commander/zhihu-commander.js';
 import type { WorkerClawConfig } from './config.js';
 import type { ExperienceConfig } from '../experience/types.js';
 import type { RecurringTaskSchedulerConfig } from '../scheduler/recurring-task-scheduler.js';
 import type { WeiboCommanderConfig } from '../commander/types.js';
 import type { XhsCommanderConfig } from '../commander/xhs-types.js';
 import type { DouyinCommanderConfig } from '../commander/douyin-types.js';
+import type { ZhihuCommanderConfig, ZhihuAutoTaskDef } from '../commander/zhihu-types.js';
 
 // ==================== WorkerClaw 主类 ====================
 
@@ -38,6 +40,7 @@ export class WorkerClaw {
   private weiboCommander: WeiboCommander | null = null;
   private xhsCommander: XhsCommander | null = null;
   private douyinCommander: DouyinCommander | null = null;
+  private zhihuCommander: ZhihuCommander | null = null;
 
   private isRunning = false;
 
@@ -349,6 +352,81 @@ export class WorkerClaw {
   }
 
   /**
+   * 初始化知乎运营指挥官
+   */
+  private async initializeZhihuCommander(): Promise<void> {
+    const config = this.config;
+
+    // 私有虾模式下，如果配置了 zhihuCommander.enabled，则自动启动指挥官
+    if (!config.zhihuCommander?.enabled || config.mode !== 'private') {
+      return;
+    }
+
+    // 自动获取 ownerId（优先级：配置 → 绑定关系查询）
+    let ownerId = config.zhihuCommander.ownerId || (config as any).ownerId || '';
+
+    if (!ownerId && config.platform.botId) {
+      // 配置中没有 ownerId，尝试通过 botId 查询绑定关系
+      this.logger.info('[ZhihuCommander] 配置中缺少 ownerId，尝试通过 botId 查询绑定关系...');
+      const resolved = await import('../commander/data-collector.js').then(m =>
+        m.DataCollector.resolveOwnerId(config.platform.apiUrl || 'https://www.miniabc.top', config.platform.botId)
+      );
+      if (resolved) {
+        ownerId = resolved.ownerId;
+        this.logger.info(`[ZhihuCommander] 已通过 botId 获取 ownerId: ${ownerId}`);
+      } else {
+        this.logger.error('[ZhihuCommander] 无法获取 ownerId，ZhihuCommander 启动失败');
+        return;
+      }
+    }
+
+    const zhihuConfig: ZhihuCommanderConfig = {
+      enabled: true,
+      ownerId: ownerId || undefined,
+      platformApiUrl: config.platform.apiUrl || 'https://www.miniabc.top',
+      collection: {
+        intervalMs: config.zhihuCommander?.collection?.intervalMs || 30 * 60 * 1000,
+        hotIntervalMs: config.zhihuCommander?.collection?.hotIntervalMs || 60 * 60 * 1000,
+        historyRetentionDays: config.zhihuCommander?.collection?.historyRetentionDays || 30,
+        collectHot: config.zhihuCommander?.collection?.collectHot !== false,
+        collectInteractions: config.zhihuCommander?.collection?.collectInteractions !== false,
+      },
+      automation: {
+        autoPostArticle: config.zhihuCommander?.automation?.autoPostArticle !== false,
+        autoPostAnswer: config.zhihuCommander?.automation?.autoPostAnswer !== false,
+        autoReply: config.zhihuCommander?.automation?.autoReply !== false,
+        maxArticlesPerDay: config.zhihuCommander?.automation?.maxArticlesPerDay || 2,
+        maxAnswersPerDay: config.zhihuCommander?.automation?.maxAnswersPerDay || 5,
+        maxRepliesPerDay: config.zhihuCommander?.automation?.maxRepliesPerDay || 20,
+        requireConfirmation: config.zhihuCommander?.automation?.requireConfirmation !== false,
+      },
+      templateId: config.zhihuCommander?.templateId || 'standard',
+      customTasks: config.zhihuCommander?.customTasks as ZhihuAutoTaskDef[] | undefined,
+      dataDir: config.zhihuCommander?.dataDir,
+    };
+
+    this.zhihuCommander = new ZhihuCommander(
+      zhihuConfig,
+      config.platform,
+      config.llm
+    );
+
+    this.logger.info('[ZhihuCommander] 知乎运营指挥官已初始化');
+
+    // 启动指挥官
+    await this.zhihuCommander.start();
+    this.logger.info('[ZhihuCommander] 知乎运营指挥官已启动');
+
+    // 注入 AgentEngine 供指挥官调用
+    this.zhihuCommander.setAgentEngine(this.taskManager.getAgentEngine());
+
+    // 将指挥官的定时任务注入调度器
+    if (this.recurringTaskScheduler) {
+      this.zhihuCommander.setRecurringTaskScheduler(this.recurringTaskScheduler);
+    }
+  }
+
+  /**
    * 启动 WorkerClaw
    */
   async start(): Promise<void> {
@@ -410,6 +488,9 @@ export class WorkerClaw {
 
       // 初始化抖音运营指挥官
       await this.initializeDouyinCommander();
+
+      // 初始化知乎运营指挥官
+      await this.initializeZhihuCommander();
 
       // 为 AgentEngine 设置 ownerId（用于 web_cli 工具）
       // 优先级：weiboCommander.ownerId > 通过 botId 查询
