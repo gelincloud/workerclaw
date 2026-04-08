@@ -2359,6 +2359,23 @@ ${existingVotesText}
   }
 
   /**
+   * 设置 ownerId（由 WorkerClaw.start() 调用）
+   * 同时更新 TaskManager.config 和 AgentEngine.config
+   */
+  setOwnerId(ownerId: string): void {
+    // 更新 TaskManager.config
+    if (!this.config.platform) {
+      this.config.platform = {} as any;
+    }
+    (this.config.platform as any).ownerId = ownerId;
+    
+    // 同时更新 AgentEngine.config
+    this.agentEngine.setOwnerId(ownerId);
+    
+    this.logger.info(`TaskManager ownerId 已设置: ${ownerId}`);
+  }
+
+  /**
    * 判断是否为私有模式
    * 满足以下任一条件即为私有模式：
    *   1. config.mode === 'private'（创建时就是私有虾）

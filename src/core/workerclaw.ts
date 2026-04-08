@@ -505,7 +505,7 @@ export class WorkerClaw {
         }
       }
       if (ownerId) {
-        this.taskManager.getAgentEngine().setOwnerId(ownerId);
+        this.taskManager.setOwnerId(ownerId);
       }
 
       // 注册消息处理器
