@@ -385,8 +385,7 @@ const main = defineCommand({
             console.log(`\n📊 运营指挥官: ${enabledCommanders.length} 个已启用`);
             for (const c of enabledCommanders) {
               const template = c.config.templateId || 'standard';
-              const ownerId = c.config.ownerId || '自动获取';
-              console.log(`  - ${c.name}指挥官 (模板: ${template}, 塘主: ${ownerId})`);
+              console.log(`  - ${c.name}指挥官 (模板: ${template})`);
             }
           } else {
             console.log(`\n📊 运营指挥官: 未启用`);
