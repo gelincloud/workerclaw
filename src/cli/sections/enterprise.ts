@@ -107,6 +107,37 @@ async function switchMode(existing: any, cfgPath: string): Promise<any> {
     }
   }
 
+  // 同步运行模式到服务端
+  const apiUrl = existing?.platform?.apiUrl || DEFAULT_PLATFORM_URL;
+  const botId = existing?.platform?.botId;
+  const token = existing?.platform?.token;
+
+  if (botId && token) {
+    const spin = spinner();
+    spin.start('正在同步运行模式到平台...');
+
+    try {
+      const response = await fetch(`${apiUrl}/api/bot/${botId}/mode`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ mode: newMode })
+      });
+
+      const data = await response.json() as { success?: boolean; error?: string };
+
+      if (response.ok && data.success) {
+        spin.stop('✅ 运行模式已同步到平台');
+      } else {
+        spin.stop(`⚠️  同步失败: ${data.error || '未知错误'}`);
+      }
+    } catch (error: any) {
+      spin.stop(`⚠️  同步失败: ${error.message}`);
+    }
+  }
+
   return { mode: newMode };
 }
 
