@@ -17,6 +17,7 @@
 import { createLogger } from '../core/logger.js';
 import type { ToolDefinition, ToolExecutorFn, ToolResult, PermissionLevel } from '../types/agent.js';
 import { BrowserBridgeClient } from '../browser/bridge.js';
+import type { BridgeClientConfig } from '../browser/bridge.js';
 import type { WebCliConfig } from '../core/config.js';
 
 const logger = createLogger('WebCli');
@@ -145,7 +146,7 @@ async function executeLocalMode(
       return await handleCookiesCommand(client, command, params, toolCallId);
     } else {
       // 其他站点：根据命令类型处理
-      return await handleSiteCommand(client, site, command, params, workspace, toolCallId);
+      return await handleSiteCommand(client, site, command, params, workspace, toolCallId, localConfig);
     }
 
   } catch (err) {
@@ -297,13 +298,18 @@ async function handleSiteCommand(
   command: string,
   params: Record<string, any>,
   workspace: string,
-  toolCallId: string
+  toolCallId: string,
+  localConfig?: BridgeClientConfig  // 传递配置以便创建更长超时的 client
 ): Promise<ToolResult> {
   const { title, content, images, topics, query, limit } = params;
 
   // 需要登录态的操作：通过本地浏览器执行
   if (command === 'publish' || command === 'post') {
-    return await handlePublishCommand(client, site, params, workspace, toolCallId);
+    // 发布命令需要更长超时（120秒），创建新的 client
+    const publishClient = localConfig 
+      ? new BrowserBridgeClient({ ...localConfig, timeout: 120000 })
+      : client;
+    return await handlePublishCommand(publishClient, site, params, workspace, toolCallId);
   }
 
   // 搜索命令：需要登录态，通过本地浏览器
@@ -966,7 +972,11 @@ async function executePlatformMode(
     const ownerId = context?.ownerId;
     if (ownerId) body.ownerId = ownerId;
 
-    const timeoutMs = Math.min(context?.remainingMs || 30000, 30000);
+    // 发布类命令需要更长超时时间（约 30 秒操作时间）
+    const publishCommands = ['xiaohongshu/publish', 'weibo/post', 'zhihu/post_article', 'zhihu/post_answer'];
+    const isPublishCommand = publishCommands.some(cmd => command === cmd || command.startsWith(cmd));
+    const defaultTimeout = isPublishCommand ? 120000 : 30000; // 发布命令 120 秒，其他 30 秒
+    const timeoutMs = Math.min(context?.remainingMs || defaultTimeout, defaultTimeout);
 
     const response = await fetch(executeUrl, {
       method: 'POST',

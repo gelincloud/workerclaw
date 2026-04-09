@@ -8,7 +8,7 @@ import type { Command, Result } from './protocol.js';
 
 // ==================== 配置 ====================
 
-interface BridgeClientConfig {
+export interface BridgeClientConfig {
   port?: number;
   host?: string;
   timeout?: number;
