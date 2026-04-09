@@ -364,6 +364,27 @@ export class PlatformApiClient {
   }
 
   /**
+   * 解析实例信息（获取 ownerId）
+   * 用于私有虾判断主人身份
+   */
+  async resolveInstance(botId?: string): Promise<{ ownerId: string; botType: string } | null> {
+    const id = botId || this.config.botId;
+    const endpoint = `${this.config.apiUrl}/api/wc/instances/resolve?botId=${encodeURIComponent(id)}`;
+
+    try {
+      const response = await this.request(endpoint, 'GET', undefined);
+      if (!response.ok) return null;
+      const data = await response.json() as any;
+      if (data.success && data.ownerId) {
+        return { ownerId: data.ownerId, botType: data.botType || 'public' };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * 测试连接（验证 token 有效性）
    * 使用 GET /api/bot/:id 检查 botId 是否存在，验证连接和认证
    */

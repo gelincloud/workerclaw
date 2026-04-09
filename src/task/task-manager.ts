@@ -81,6 +81,9 @@ export class TaskManager {
   /** 定时任务调度器（由外部注入，私有虾模式） */
   private recurringTaskScheduler: RecurringTaskScheduler | null = null;
 
+  /** 缓存的 ownerId（从平台解析获取，用于私有虾识别主人） */
+  private resolvedOwnerId: string | null = null;
+
   // 消息去重（type + senderId + contentHash → 时间戳）
   private recentMessageKeys = new Map<string, number>();
   private dedupTTL = 60_000; // 60秒内相同消息视为重复
@@ -713,10 +716,16 @@ export class TaskManager {
           return;
         }
 
+        // 首次判断主人：如果配置中没有 ownerId，尝试从平台解析
+        if (!this.config.ownerId && !this.resolvedOwnerId) {
+          this.logger.info(`[DEBUG] 配置中没有 ownerId，尝试从平台解析...`);
+          await this.resolveOwnerId();
+        }
+
         this.logger.info(`[DEBUG] 准备调用 isOwner, sender_id=${privateMsg.sender_id}`);
         const ownerCheck = this.isOwner(privateMsg.sender_id);
         this.logger.info(`[DEBUG] isOwner 返回: ${ownerCheck}`);
-        
+
         if (ownerCheck) {
           // 主人：直接执行指令
           this.logger.info(`[DEBUG] 识别为主人，执行指令`);
@@ -2392,33 +2401,66 @@ ${existingVotesText}
    *   2. config.ownerId（私有虾直接购买场景，从控制台写入 config）
    *   3. config.platform.ownerId（AgentEngine 设置的平台 ownerId）
    *   4. config.weiboCommander.ownerId（微博运营指挥官的 ownerId）
+   *   5. 从平台 API 解析获取（本地部署场景，首次调用时获取并缓存）
    */
   private isOwner(senderId: string): boolean {
     const isPrivate = this.isPrivateMode();
     this.logger.info(`[isOwner] 检查开始: isPrivateMode=${isPrivate}, senderId=${senderId}`);
     if (!isPrivate) return false;
-    
+
     // 租赁场景：renterId 从服务器同步
     if (this.rentalState.renterId && senderId === this.rentalState.renterId) {
       this.logger.info(`[isOwner] 租赁场景匹配: renterId=${this.rentalState.renterId}`);
       return true;
     }
-    
+
     // 私有虾直接购买场景：ownerId 从 config 获取（多个来源）
     const fromConfig = this.config.ownerId;
     const fromPlatform = (this.config.platform as any)?.ownerId;
     const fromWeibo = (this.config as any).weiboCommander?.ownerId;
     const configOwnerId = fromConfig || fromPlatform || fromWeibo;
-    
-    this.logger.info(`[isOwner] ownerId检查: fromConfig=${fromConfig}, fromPlatform=${fromPlatform}, fromWeibo=${fromWeibo}, 最终=${configOwnerId}`);
-    this.logger.info(`[isOwner] 匹配检查: senderId=${senderId}, configOwnerId=${configOwnerId}, match=${senderId === configOwnerId}`);
-    
+
+    this.logger.info(`[isOwner] ownerId检查: fromConfig=${fromConfig}, fromPlatform=${fromPlatform}, fromWeibo=${fromWeibo}, 缓存=${this.resolvedOwnerId}`);
+
+    // 优先使用配置中的 ownerId
     if (configOwnerId && senderId === configOwnerId) {
-      this.logger.info(`[isOwner] ✓ 匹配成功!`);
+      this.logger.info(`[isOwner] ✓ 配置匹配成功!`);
       return true;
     }
+
+    // 使用缓存的 ownerId（从平台解析获取）
+    if (this.resolvedOwnerId && senderId === this.resolvedOwnerId) {
+      this.logger.info(`[isOwner] ✓ 缓存匹配成功! resolvedOwnerId=${this.resolvedOwnerId}`);
+      return true;
+    }
+
     this.logger.info(`[isOwner] ✗ 匹配失败`);
     return false;
+  }
+
+  /**
+   * 从平台解析 ownerId（异步，用于私有虾首次识别主人）
+   * 成功后会缓存到 resolvedOwnerId，后续 isOwner 调用可直接使用
+   */
+  private async resolveOwnerId(): Promise<string | null> {
+    if (this.resolvedOwnerId) {
+      return this.resolvedOwnerId;
+    }
+
+    try {
+      this.logger.info(`[resolveOwnerId] 正在从平台解析 ownerId...`);
+      const result = await this.platformApi.resolveInstance();
+      if (result?.ownerId) {
+        this.resolvedOwnerId = result.ownerId;
+        this.logger.info(`[resolveOwnerId] ✓ 解析成功: ownerId=${result.ownerId}, botType=${result.botType}`);
+        return result.ownerId;
+      }
+      this.logger.warn(`[resolveOwnerId] ✗ 解析失败: 返回结果为空`);
+      return null;
+    } catch (err) {
+      this.logger.error(`[resolveOwnerId] ✗ 解析异常`, { error: (err as Error).message });
+      return null;
+    }
   }
 
   /**
@@ -2456,6 +2498,8 @@ ${existingVotesText}
       if (reply) {
         await this.platformApi.sendPrivateMessage(this.config.platform.botId, senderId, reply);
       }
+      // 闲聊结束后释放锁，允许后续消息处理
+      this.ownerExecuting = false;
       return;
     }
 
@@ -2463,6 +2507,8 @@ ${existingVotesText}
     const schedulerCmd = this.parseSchedulerCommand(content);
     if (schedulerCmd) {
       await this.handleSchedulerCommand(senderId, schedulerCmd);
+      // 定时任务指令结束后释放锁
+      this.ownerExecuting = false;
       return;
     }
 
