@@ -474,3 +474,87 @@ function formatCliResult(
     return `${site}/${command}: ${data}`;
   }
 }
+
+/**
+ * 获取 web_cli_describe 工具定义
+ *
+ * 让 Agent 动态发现平台当前支持的所有 CLI 命令，
+ * 包含策略类型、是否只读、参数 schema 等元信息。
+ */
+export function getWebCliDescribeToolDefinition(platformUrl?: string): ToolDefinition {
+  const baseUrl = platformUrl || 'https://www.miniabc.top';
+
+  const executor: ToolExecutorFn = async (params, context) => {
+    const toolCallId = (context as any)?.toolCallId || 'web_cli_describe';
+
+    try {
+      const response = await fetch(`${baseUrl}/api/cli/commands`, {
+        headers: {
+          'User-Agent': 'WorkerClaw/1.0',
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        return { toolCallId, success: false, content: `命令发现失败: HTTP ${response.status}`, error: `http_${response.status}` };
+      }
+
+      const result = await response.json() as { success: boolean; commands: any[]; stats: { total: number; fetch: number; browser: number; auth: number } };
+
+      if (!result.success || !result.commands) {
+        return { toolCallId, success: false, content: '命令列表为空', error: 'empty_commands' };
+      }
+
+      // 过滤
+      const filterStrategy = params.strategy as string | undefined;
+      const filterSite = params.site as string | undefined;
+
+      let commands = result.commands;
+      if (filterStrategy) {
+        commands = commands.filter((c: any) => c.strategy === filterStrategy);
+      }
+      if (filterSite) {
+        commands = commands.filter((c: any) => c.site === filterSite);
+      }
+
+      // 格式化
+      const lines = commands.map((c: any) => {
+        const readOnly = c.isReadOnly ? '只读' : '写操作';
+        return `  ${c.site}/${c.command}  [${c.strategy}]  ${readOnly}  — ${c.description}`;
+      });
+
+      const statsInfo = `总计: ${result.stats.total} 个命令 (fetch=${result.stats.fetch}, browser=${result.stats.browser}, auth=${result.stats.auth})`;
+
+      const content = [
+        `CLI 命令列表${filterStrategy ? ` [${filterStrategy}]` : ''}${filterSite ? ` [${filterSite}]` : ''}:`,
+        statsInfo,
+        '',
+        ...lines,
+        '',
+        '使用 web_cli 工具调用: { site, command, query, limit }',
+      ].join('\n');
+
+      return { toolCallId, success: true, content };
+
+    } catch (err) {
+      logger.error('web_cli_describe 执行失败', { error: (err as Error).message });
+      return { toolCallId, success: false, content: `命令发现失败: ${(err as Error).message}`, error: (err as Error).message };
+    }
+  };
+
+  return {
+    name: 'web_cli_describe',
+    description: `查看平台当前可用的 CLI 命令列表。动态发现平台支持的所有命令，包括 fetch（公开API）、browser（网页渲染）、auth（带登录态）三种策略。
+参数: strategy (可选过滤: fetch/browser/auth), site (可选过滤: 站点名)`,
+    requiredLevel: 'read_only',
+    parameters: {
+      type: 'object',
+      properties: {
+        strategy: { type: 'string', enum: ['fetch', 'browser', 'auth'], description: '按策略过滤' },
+        site: { type: 'string', description: '按站点名过滤' },
+      },
+    },
+    executor,
+  };
+}

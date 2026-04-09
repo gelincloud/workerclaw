@@ -23,7 +23,7 @@ import { ToolRegistry, createDefaultToolRegistry } from './tool-registry.js';
 import { ToolExecutor } from './tool-executor.js';
 import { SkillRunner, type SkillRunnerConfig } from '../skills/skill-runner.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
-import type { LLMConfig, SecurityConfig } from '../core/config.js';
+import type { LLMConfig, SecurityConfig, WebCliConfig } from '../core/config.js';
 import type {
   Task, TaskResult, TaskExecutionContext, TaskOutput,
 } from '../types/task.js';
@@ -57,6 +57,8 @@ export interface AgentEngineConfig {
   skillRunner?: Partial<SkillRunnerConfig>;
   /** 本地媒体资料库目录 */
   mediaDir?: string;
+  /** Web CLI 配置（本地 Browser Bridge 或平台代理） */
+  webCli?: WebCliConfig;
 }
 
 export class AgentEngine {
@@ -97,7 +99,7 @@ export class AgentEngine {
     });
 
     // 工具系统
-    const toolRegistry = createDefaultToolRegistry(config.platform?.apiUrl, config.mediaDir);
+    const toolRegistry = createDefaultToolRegistry(config.platform?.apiUrl, config.mediaDir, config.webCli);
     this.toolExecutor = new ToolExecutor(
       toolRegistry,
       { security: config.security },

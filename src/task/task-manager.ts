@@ -50,6 +50,8 @@ export interface TaskManagerConfig {
   ownerId?: string;
   /** 本地媒体资料库目录 */
   mediaDir?: string;
+  /** Web CLI 配置（本地 Browser Bridge 或平台代理） */
+  webCli?: import('../core/config.js').WebCliConfig;
 }
 
 /** 租赁状态 */
@@ -155,7 +157,7 @@ export class TaskManager {
     );
 
     // Phase 3: 工具系统
-    const registry = createDefaultToolRegistry(config.platform?.apiUrl, config.mediaDir);
+    const registry = createDefaultToolRegistry(config.platform?.apiUrl, config.mediaDir, config.webCli);
     this.toolExecutor = new ToolExecutor(
       registry,
       { security: config.security },

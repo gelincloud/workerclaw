@@ -455,8 +455,10 @@ async function executeWriteFile(params: any, context: any): Promise<ToolResult> 
 /**
  * 创建内置工具注册表（带执行器）
  * @param platformUrl 平台 API 地址（用于 send_file 等平台工具）
+ * @param mediaDir 本地媒体目录
+ * @param webCliConfig Web CLI 配置（本地 Browser Bridge 或平台代理）
  */
-export function createDefaultToolRegistry(platformUrl?: string, mediaDir?: string): ToolRegistry {
+export function createDefaultToolRegistry(platformUrl?: string, mediaDir?: string, webCliConfig?: import('../core/config.js').WebCliConfig): ToolRegistry {
   const registry = new ToolRegistry();
 
   const builtinTools: ToolDefinition[] = [
@@ -648,9 +650,9 @@ export function createDefaultToolRegistry(platformUrl?: string, mediaDir?: strin
   }
 
   // 注册 web_cli 通用代理工具
-  const webCliTool = getWebCliToolDefinition();
+  const webCliTool = getWebCliToolDefinition(webCliConfig);
   registry.register(webCliTool);
-  logger.info('已注册 web_cli 通用代理工具');
+  logger.info(`已注册 web_cli 通用代理工具 (模式: ${webCliConfig?.mode || 'platform'})`);
 
   // 注册 web_cli_describe 命令发现工具
   const webCliDescribeTool = getWebCliDescribeToolDefinition();

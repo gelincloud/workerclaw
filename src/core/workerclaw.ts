@@ -80,6 +80,8 @@ export class WorkerClaw {
         ownerId: (config as any).ownerId
           || (config as any).weiboCommander?.ownerId
           || (config.platform as any)?.ownerId,
+        mediaDir: config.mediaDir,
+        webCli: config.webCli,
       },
       this.eventBus,
       this.securityGate,
