@@ -126,6 +126,7 @@ export class TaskManager {
           ownerId: (config as any).ownerId, // 可能初始为空，由 WorkerClaw.start() 设置
           apiUrl: config.platform.apiUrl,
         },
+        webCli: config.webCli, // 传递 Web CLI 配置（本地 Browser Bridge 或平台代理）
       },
       eventBus,
     );

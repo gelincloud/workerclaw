@@ -11,6 +11,7 @@ export type BridgeAction =
   | 'cookies'
   | 'screenshot'
   | 'close-window'
+  | 'focus-window'
   | 'cdp'
   | 'sessions'
   | 'set-file-input'

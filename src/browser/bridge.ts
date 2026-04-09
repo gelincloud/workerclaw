@@ -226,6 +226,20 @@ export class BrowserBridgeClient {
   }
 
   /**
+   * 激活自动化窗口（带到前台）
+   */
+  async focusWindow(workspace?: string): Promise<void> {
+    const result = await this.execute({
+      action: 'focus-window',
+      workspace,
+    });
+
+    if (!result.ok) {
+      throw new Error(result.error || 'focusWindow failed');
+    }
+  }
+
+  /**
    * 绑定当前标签页
    */
   async bindCurrent(options?: {
