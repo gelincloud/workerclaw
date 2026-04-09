@@ -360,6 +360,37 @@ const main = defineCommand({
             console.log(`  - ${skill.metadata.displayName} (${skill.metadata.name})`);
           }
 
+          // Web CLI 模式状态
+          const webCli = config.webCli;
+          if (webCli) {
+            const mode = webCli.mode || 'platform';
+            const modeDesc = mode === 'local' 
+              ? `本地模式 (端口: ${webCli.local?.port || 19825})`
+              : '平台代理模式';
+            console.log(`\n🌐 Web CLI: ${modeDesc}`);
+          } else {
+            console.log(`\n🌐 Web CLI: 平台代理模式 (默认)`);
+          }
+
+          // 运营指挥官状态
+          const commanders: Array<{ name: string; key: string; config: any }> = [
+            { name: '微博', key: 'weiboCommander', config: config.weiboCommander },
+            { name: '小红书', key: 'xhsCommander', config: config.xhsCommander },
+            { name: '抖音', key: 'douyinCommander', config: config.douyinCommander },
+            { name: '知乎', key: 'zhihuCommander', config: config.zhihuCommander },
+          ];
+
+          const enabledCommanders = commanders.filter(c => c.config?.enabled);
+          if (enabledCommanders.length > 0) {
+            console.log(`\n📊 运营指挥官: ${enabledCommanders.length} 个已启用`);
+            for (const c of enabledCommanders) {
+              const template = c.config.templateId || 'standard';
+              const ownerId = c.config.ownerId || '自动获取';
+              console.log(`  - ${c.name}指挥官 (模板: ${template}, 塘主: ${ownerId})`);
+            }
+          } else {
+            console.log(`\n📊 运营指挥官: 未启用`);
+          }
 
         } catch {
           console.error('❌ 配置文件解析失败');
