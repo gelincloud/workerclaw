@@ -22,6 +22,36 @@ import type { WebCliConfig } from '../core/config.js';
 
 const logger = createLogger('WebCli');
 
+// ==================== 反爬虫工具函数 ====================
+
+/**
+ * 生成随机等待时间（6-10秒）
+ * 用于模拟人类操作间隔，绕过反爬检测
+ */
+function randomDelay(minMs: number = 6000, maxMs: number = 10000): Promise<void> {
+  const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  logger.debug(`随机等待 ${(delay / 1000).toFixed(1)} 秒`);
+  return new Promise(resolve => setTimeout(resolve, delay));
+}
+
+/**
+ * 注入 webdriver 隐藏脚本
+ * 将 navigator.webdriver 设为 undefined，绕过自动化检测
+ */
+async function injectWebDriverHideScript(client: BrowserBridgeClient, workspace: string): Promise<void> {
+  try {
+    await client.exec(`
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+        configurable: true
+      });
+    `, { workspace });
+    logger.debug('已注入 webdriver 隐藏脚本');
+  } catch (err) {
+    logger.warn('注入 webdriver 隐藏脚本失败', { error: (err as Error).message });
+  }
+}
+
 // ==================== 工具定义 ====================
 
 /**
@@ -459,7 +489,12 @@ async function handlePublishCommand(
     // 1. 导航到发布页面
     console.log(`[handlePublishCommand] 步骤1: 导航到 ${publishUrl}`);
     await client.navigate(publishUrl, { workspace });
-    await new Promise(r => setTimeout(r, 3000)); // 等待页面加载
+    
+    // 反爬虫：注入 webdriver 隐藏脚本
+    await injectWebDriverHideScript(client, workspace);
+    
+    // 反爬虫：随机等待（6-10秒）
+    await randomDelay();
 
     // 2. 根据站点执行发布流程
     if (site === 'xiaohongshu') {
@@ -507,7 +542,8 @@ async function handlePublishCommand(
       `, { workspace });
       console.log(`[handlePublishCommand] 标签页选择结果:`, fillResult);
       
-      await new Promise(r => setTimeout(r, 3000));
+      // 反爬虫：随机等待（6-10秒）
+      await randomDelay();
 
       // 3. 点击"新的创作"按钮（写长文模式需要）
       if (!hasImages) {
@@ -551,7 +587,9 @@ async function handlePublishCommand(
           })()
         `, { workspace });
         console.log(`[handlePublishCommand] "新的创作"点击结果:`, createResult);
-        await new Promise(r => setTimeout(r, 3000));
+        
+        // 反爬虫：随机等待（6-10秒）
+        await randomDelay();
       }
 
       // 4. 填写标题和正文
@@ -626,7 +664,8 @@ async function handlePublishCommand(
       `, { workspace });
       console.log(`[handlePublishCommand] 填写结果:`, writeResult);
       
-      await new Promise(r => setTimeout(r, 1000));
+      // 反爬虫：随机等待（6-10秒）
+      await randomDelay();
 
       // 5. 点击"一键排版"按钮
       console.log(`[handlePublishCommand] 步骤5: 点击"一键排版"`);
@@ -650,8 +689,8 @@ async function handlePublishCommand(
       `, { workspace }) as { clicked: boolean; foundButtons: string[] };
       console.log(`[handlePublishCommand] "一键排版"点击结果:`, formatResult);
       
-      // 等待排版完成，新页面加载（10秒确保页面完全加载）
-      await new Promise(r => setTimeout(r, 10000));
+      // 反爬虫：随机等待（8-12秒），排版页面需要加载
+      await randomDelay(8000, 12000);
       
       // 5.5 截图预览页面状态（调试用）
       const previewScreenshot = await client.screenshot({ workspace });
@@ -716,8 +755,8 @@ async function handlePublishCommand(
         console.log(`[handlePublishCommand] 检测到预览页面但没有"下一步"按钮，直接尝试发布`);
       }
       
-      // 等待页面跳转（6秒确保发布页面完全加载）
-      await new Promise(r => setTimeout(r, 6000));
+      // 反爬虫：随机等待（6-10秒）
+      await randomDelay();
 
       // 7. 点击"发布"按钮
       console.log(`[handlePublishCommand] 步骤7: 点击"发布"`);
@@ -785,8 +824,8 @@ async function handlePublishCommand(
       `, { workspace }) as { clicked: boolean; foundButtons: string[]; pageUrl: string; clickedText?: string; clickedSelector?: string };
       console.log(`[handlePublishCommand] "发布"点击结果:`, publishResult);
       
-      // 等待发布完成
-      await new Promise(r => setTimeout(r, 2000));
+      // 反爬虫：随机等待（3-6秒），等待发布完成
+      await randomDelay(3000, 6000);
 
       // 8. 截图当前状态
       const screenshot = await client.screenshot({ workspace });
