@@ -116,6 +116,8 @@ ${mode === 'local' ? `
       required: ['site', 'command'],
     },
     executor,
+    // 发布类命令需要较长时间（多个页面交互 + 随机等待）
+    maxTimeoutMs: 180000, // 3 分钟
   };
 }
 

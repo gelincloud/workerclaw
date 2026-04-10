@@ -74,6 +74,8 @@ export interface ToolDefinition {
   parameters: Record<string, any>;
   /** 工具执行器 (注册时绑定) */
   executor?: ToolExecutorFn;
+  /** 最大超时时间（毫秒），覆盖全局 commandTimeoutMs。默认使用全局配置 */
+  maxTimeoutMs?: number;
 }
 
 export type ToolExecutorFn = (params: any, context: ToolExecutionContext) => Promise<ToolResult>;

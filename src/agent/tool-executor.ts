@@ -80,8 +80,9 @@ export class ToolExecutor {
       };
     }
 
-    // 4. 获取执行器
+    // 4. 获取执行器和工具定义
     const executor = this.registry.getExecutor(name);
+    const tool = this.registry.getTool(name);
 
     this.eventBus.emit(WorkerClawEvent.TOOL_CALLED, {
       taskId: context.taskId,
@@ -93,7 +94,6 @@ export class ToolExecutor {
     try {
       if (!executor) {
         // 无执行器：返回工具描述（说明可用但未实现）
-        const tool = this.registry.getTool(name);
         return {
           toolCallId,
           success: true,
@@ -106,10 +106,11 @@ export class ToolExecutor {
         };
       }
 
-      // 在超时限制内执行
+      // 在超时限制内执行（工具可覆盖全局超时）
       const result = await this.executeWithTimeout(
         () => executor(params, context),
         context.remainingMs,
+        tool?.maxTimeoutMs, // 工具定义中的最大超时时间
       );
 
       this.eventBus.emit(WorkerClawEvent.TOOL_COMPLETED, {
@@ -143,16 +144,22 @@ export class ToolExecutor {
 
   /**
    * 带超时的执行
+   * @param fn 要执行的函数
+   * @param timeoutMs 任务剩余时间（毫秒）
+   * @param maxTimeoutMs 工具定义的最大超时时间（可选，覆盖全局配置）
    */
   private async executeWithTimeout<T>(
     fn: () => Promise<T>,
     timeoutMs: number,
+    maxTimeoutMs?: number,
   ): Promise<T> {
     if (timeoutMs <= 0) {
       throw new Error('执行超时：无剩余时间');
     }
 
-    const effectiveTimeout = Math.min(timeoutMs, this.config.security.sandbox.commandTimeoutMs);
+    // 如果工具定义了 maxTimeoutMs，使用它作为上限；否则使用全局配置
+    const upperLimit = maxTimeoutMs ?? this.config.security.sandbox.commandTimeoutMs;
+    const effectiveTimeout = Math.min(timeoutMs, upperLimit);
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
