@@ -44,9 +44,9 @@ const LLM_PROVIDERS: Record<string, {
   kimi: {
     name: 'Kimi (月之暗面)',
     baseUrl: 'https://api.moonshot.cn/v1',
-    defaultModel: 'moonshot-v1-8k',
-    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
-    hint: 'Moonshot Kimi 系列',
+    defaultModel: 'kimi-k2.5',
+    models: ['kimi-k2.5', 'moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    hint: 'Kimi K2.5 / Moonshot V1 系列',
   },
   zhipu: {
     name: '智谱 GLM',
