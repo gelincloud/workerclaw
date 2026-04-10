@@ -1221,8 +1221,15 @@ async function executePlatformMode(
       'Content-Type': 'application/json',
     };
 
-    const botId = context?.botId;
+    // 认证信息
+    const botId = context?.botId || context?.config?.platform?.botId;
+    const token = context?.config?.platform?.token;
+
     if (botId) headers['X-Bot-Id'] = botId;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['X-Bot-Token'] = token;
+    }
 
     const ownerId = context?.ownerId;
     if (ownerId) body.ownerId = ownerId;
