@@ -579,11 +579,11 @@ export const DEFAULT_CONFIG: Omit<WorkerClawConfig, 'platform' | 'llm'> = {
     },
     timeout: {
       taskTimeoutMs: 300000,
-      llmTimeoutMs: 90000,  // 90 秒，更快触发端点切换
+      llmTimeoutMs: 120000,  // 120 秒，给 LLM 更多时间生成回复
       queueTimeoutMs: 60000,
       retryOnTimeout: true,  // 超时自动重试
-      maxRetries: 2,         // 重试 2 次
-      retryDelayMs: 3000,
+      maxRetries: 3,         // 重试 3 次（从 2 次增加）
+      retryDelayMs: 5000,    // 5 秒延迟（从 3 秒增加）
     },
   },
   personality: {

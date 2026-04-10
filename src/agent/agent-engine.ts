@@ -286,6 +286,49 @@ export class AgentEngine {
       const errorMessage = error.message;
 
       this.logger.error(`任务执行失败 [${task.taskId}]`, { error: errorMessage, durationMs });
+
+      // 🔧 关键修复：检查是否有成功的工具执行结果
+      // 当 LLM 失败时（如网络超时），如果工具已执行成功，应该返回成功状态而不是失败
+      const session = this.sessionManager.getSession(task.taskId);
+      const toolMessages = session?.messages.filter(m => m.role === 'tool') || [];
+      const lastToolResult = toolMessages[toolMessages.length - 1];
+
+      // 如果有工具执行结果，尝试从中提取成功信息
+      if (lastToolResult && lastToolResult.content) {
+        try {
+          const toolContent = typeof lastToolResult.content === 'string'
+            ? lastToolResult.content
+            : JSON.stringify(lastToolResult.content);
+
+          // 检查是否是成功的发布结果（包含 success: true）
+          if (toolContent.includes('"success":true') || toolContent.includes('发布成功')) {
+            this.logger.info(`🎯 LLM 失败但工具执行成功，提取结果 [${task.taskId}]`, {
+              toolName: lastToolResult.name,
+            });
+
+            this.eventBus.emit(WorkerClawEvent.TASK_COMPLETED, {
+              taskId: task.taskId,
+              result: {
+                taskId: task.taskId,
+                status: 'completed',
+                content: `✅ 任务已成功执行（LLM 生成回复时遇到网络问题，但实际操作已完成）\n\n${toolContent.slice(0, 500)}`,
+                durationMs,
+              },
+            });
+
+            return {
+              taskId: task.taskId,
+              status: 'completed',
+              content: `✅ 任务已成功执行（LLM 生成回复时遇到网络问题，但实际操作已完成）`,
+              outputs: this.buildOutputs(toolContent),
+              durationMs,
+            };
+          }
+        } catch {
+          // 解析失败，继续按失败处理
+        }
+      }
+
       this.eventBus.emit(WorkerClawEvent.LLM_ERROR, { taskId: task.taskId, error });
       this.eventBus.emit(WorkerClawEvent.TASK_FAILED, { taskId: task.taskId, error });
 
