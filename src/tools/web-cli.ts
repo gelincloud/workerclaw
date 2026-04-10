@@ -893,6 +893,193 @@ async function handlePublishCommand(
       };
     }
 
+    // ========== 微博发布流程 ==========
+    if (site === 'weibo') {
+      console.log(`[handlePublishCommand] 微博发布流程开始`);
+
+      // 微博首页加载后，需要找到并点击发布按钮（+号）
+      // 微博的发布框在首页右上角，点击后展开编辑器
+
+      // 步骤2：查找并点击发布按钮（+图标或"发布"按钮）
+      console.log(`[handlePublishCommand] 步骤2: 查找发布入口`);
+      const openEditorResult = await client.exec(`
+        (function() {
+          var result = { foundButtons: [], clicked: false, clickedText: '' };
+
+          // 微博首页的发布入口可能是：
+          // 1. 右上角的"+"按钮
+          // 2. 导航栏的"发布"按钮
+          // 3. 首页输入框区域
+
+          var allElements = document.querySelectorAll('button, a, div, span');
+          for (var i = 0; i < allElements.length; i++) {
+            var el = allElements[i];
+            var text = (el.innerText || el.textContent || '').trim();
+            var className = el.className || '';
+
+            // 收集可能的按钮
+            if (text.length > 0 && text.length < 20) {
+              result.foundButtons.push(text);
+
+              // 匹配"+"按钮或"发布"按钮
+              if (text === '+' || text === '发布' || text === '写微博') {
+                el.click();
+                result.clicked = true;
+                result.clickedText = text;
+                return result;
+              }
+            }
+
+            // 检查是否有发布相关的图标按钮（通过 class 或 aria-label）
+            var ariaLabel = el.getAttribute('aria-label') || '';
+            if (ariaLabel.indexOf('发布') !== -1 || ariaLabel.indexOf('写微博') !== -1) {
+              el.click();
+              result.clicked = true;
+              result.clickedText = ariaLabel;
+              return result;
+            }
+          }
+
+          // 尝试查找带有图标的发布按钮（svg 或 icon class）
+          var iconButtons = document.querySelectorAll('[class*="publish"], [class*="post"], [class*="write"]');
+          for (var i = 0; i < iconButtons.length; i++) {
+            iconButtons[i].click();
+            result.clicked = true;
+            result.clickedText = '[icon button]';
+            return result;
+          }
+
+          return result;
+        })()
+      `, { workspace }) as { foundButtons: string[]; clicked: boolean; clickedText?: string };
+      console.log(`[handlePublishCommand] 发布入口查找结果:`, openEditorResult);
+
+      // 反爬虫：随机等待
+      await randomDelay(2000, 4000);
+
+      // 步骤3：填写微博内容
+      console.log(`[handlePublishCommand] 步骤3: 填写微博内容`);
+      const writeResult = await client.exec(`
+        (function() {
+          var result = { foundEditors: [], contentFilled: false, editorType: '' };
+
+          var content = \`${(content || '').replace(/`/g, '\\`').replace(/\n/g, '\\n')}\`;
+
+          // 微博编辑器可能是：
+          // 1. textarea 元素
+          // 2. contenteditable 的 div
+          // 3. 特定的编辑器 class
+
+          var editors = document.querySelectorAll('textarea, [contenteditable="true"], [class*="editor"], [class*="input"]');
+          result.foundEditors = Array.from(editors).map(function(e) {
+            return e.tagName + (e.className ? '.' + e.className.split(' ')[0] : '');
+          });
+
+          for (var i = 0; i < editors.length; i++) {
+            var editor = editors[i];
+
+            // 跳过搜索框
+            var placeholder = editor.getAttribute('placeholder') || '';
+            if (placeholder.indexOf('搜索') !== -1 || placeholder.indexOf('查找') !== -1) {
+              continue;
+            }
+
+            // 填写内容
+            if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
+              editor.value = content;
+            } else {
+              editor.textContent = content;
+            }
+
+            // 触发事件
+            editor.dispatchEvent(new Event('input', { bubbles: true }));
+            editor.dispatchEvent(new Event('change', { bubbles: true }));
+            editor.dispatchEvent(new Event('focus', { bubbles: true }));
+
+            result.contentFilled = true;
+            result.editorType = editor.tagName;
+            break;
+          }
+
+          return result;
+        })()
+      `, { workspace }) as { foundEditors: string[]; contentFilled: boolean; editorType?: string };
+      console.log(`[handlePublishCommand] 填写结果:`, writeResult);
+
+      // 反爬虫：随机等待
+      await randomDelay(2000, 4000);
+
+      // 步骤4：点击发布按钮
+      console.log(`[handlePublishCommand] 步骤4: 点击发布`);
+      const publishResult = await client.exec(`
+        (function() {
+          var result = { foundButtons: [], clicked: false, clickedText: '' };
+
+          // 发布按钮可能在编辑器内部或外部
+          var allElements = document.querySelectorAll('button, a, div, span');
+          for (var i = 0; i < allElements.length; i++) {
+            var el = allElements[i];
+            var text = (el.innerText || el.textContent || '').trim();
+
+            if (text.length > 0 && text.length <= 10) {
+              result.foundButtons.push(text);
+
+              if (text === '发布' || text === '发送' || text === '发表') {
+                el.click();
+                result.clicked = true;
+                result.clickedText = text;
+                return result;
+              }
+            }
+          }
+
+          // 尝试查找提交按钮（通过 class）
+          var submitBtns = document.querySelectorAll('[class*="submit"], [class*="publish"], [class*="post"]');
+          for (var i = 0; i < submitBtns.length; i++) {
+            submitBtns[i].click();
+            result.clicked = true;
+            result.clickedText = '[submit class]';
+            return result;
+          }
+
+          return result;
+        })()
+      `, { workspace }) as { foundButtons: string[]; clicked: boolean; clickedText?: string };
+      console.log(`[handlePublishCommand] 发布点击结果:`, publishResult);
+
+      // 等待发布完成
+      await randomDelay(3000, 5000);
+
+      // 步骤5：截图确认
+      const screenshot = await client.screenshot({ workspace });
+
+      // 激活窗口让用户查看
+      try {
+        await client.focusWindow(workspace);
+        console.log(`[handlePublishCommand] 窗口已激活`);
+      } catch (err) {
+        console.log(`[handlePublishCommand] 窗口激活失败:`, err);
+      }
+
+      return {
+        toolCallId,
+        success: true,
+        content: `微博发布流程完成！
+
+**内容**: ${content?.substring(0, 100)}${content && content.length > 100 ? '...' : ''}
+
+**执行步骤**:
+1. ✅ 导航到微博首页
+2. ${openEditorResult?.clicked ? '✅' : '⚠️'} 打开编辑器: ${JSON.stringify(openEditorResult)}
+3. ${writeResult?.contentFilled ? '✅' : '⚠️'} 填写内容: ${JSON.stringify(writeResult)}
+4. ${publishResult?.clicked ? '✅' : '⚠️'} 点击发布: ${JSON.stringify(publishResult)}
+
+**结果**: 发布流程已完成。浏览器窗口已激活到前台，请确认发布状态。
+
+截图已保存（base64，前100字符）: ${screenshot.substring(0, 100)}...`,
+      };
+    }
+
     return {
       toolCallId,
       success: true,
