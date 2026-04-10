@@ -31,6 +31,8 @@ export interface Command {
   tabId?: number;
   /** 工作空间标识 */
   workspace?: string;
+  /** 命令超时时间（毫秒），默认 30000 */
+  timeout?: number;
   
   // exec
   code?: string;

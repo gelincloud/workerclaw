@@ -147,11 +147,12 @@ export class BrowserBridgeDaemon {
       const id = randomUUID();
       const fullCmd: Command = { id, ...cmd };
 
-      // 设置超时
+      // 设置超时（支持客户端传入，默认 30 秒）
+      const timeoutMs = cmd.timeout || 30000;
       const timeout = setTimeout(() => {
         this.pendingCommands.delete(id);
         reject(new Error('Command timeout'));
-      }, 30000); // 30 秒超时
+      }, timeoutMs);
 
       this.pendingCommands.set(id, { resolve, reject, timeout });
 

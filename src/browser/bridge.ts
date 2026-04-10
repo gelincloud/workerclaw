@@ -68,10 +68,13 @@ export class BrowserBridgeClient {
     const timeout = setTimeout(() => controller.abort(), this.config.timeout);
 
     try {
+      // 将超时时间传递给 daemon
+      const cmdWithTimeout = { ...cmd, timeout: this.config.timeout };
+      
       const resp = await fetch(`${this.daemonUrl}/command`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cmd),
+        body: JSON.stringify(cmdWithTimeout),
         signal: controller.signal,
       });
 
