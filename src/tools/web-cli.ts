@@ -102,11 +102,12 @@ ${mode === 'local' ? `
       type: 'object',
       properties: {
         site: { type: 'string', description: '网站/引擎名称（如 xiaohongshu, weibo, zhihu, hackernews）' },
-        command: { type: 'string', description: '命令名称（如 publish, hot, search）' },
+        command: { type: 'string', description: '命令名称（如 publish, post, hot, search）' },
         query: { type: 'string', description: '搜索关键词（搜索类命令使用）' },
         limit: { type: 'number', description: '返回条数限制' },
         title: { type: 'string', description: '标题（发布类命令使用）' },
         content: { type: 'string', description: '正文内容（发布类命令使用）' },
+        text: { type: 'string', description: '微博内容（weibo/post 专用，等同于 content）' },
         images: { type: 'string', description: '图片URL，多个用逗号分隔' },
         topics: { type: 'string', description: '话题标签，多个用逗号分隔' },
         draft: { type: 'boolean', description: '是否保存为草稿（默认false直接发布）' },
@@ -338,9 +339,35 @@ async function handleSiteCommand(
   // 需要登录态的操作：通过本地浏览器执行
   if (command === 'publish' || command === 'post') {
     // 发布命令需要更长超时（120秒），创建新的 client
-    const publishClient = localConfig 
+    const publishClient = localConfig
       ? new BrowserBridgeClient({ ...localConfig, timeout: 120000 })
       : client;
+
+    // 微博发布：支持 text 参数，映射到 content
+    if (site === 'weibo') {
+      const text = params.text || params.content;
+      if (!text) {
+        return {
+          toolCallId,
+          success: false,
+          content: '发微博需要 text 参数（微博内容）',
+          error: 'missing_params',
+        };
+      }
+      // 微博不需要 title，只传 content
+      return await handlePublishCommand(publishClient, site, { ...params, content: text, title: text.substring(0, 30) }, workspace, toolCallId);
+    }
+
+    // 其他平台：需要 title 和 content
+    if (!title || !content) {
+      return {
+        toolCallId,
+        success: false,
+        content: '发布需要 title 和 content 参数',
+        error: 'missing_params',
+      };
+    }
+
     return await handlePublishCommand(publishClient, site, params, workspace, toolCallId);
   }
 
