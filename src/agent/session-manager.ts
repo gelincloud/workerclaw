@@ -112,6 +112,26 @@ export class SessionManager {
   }
 
   /**
+   * 清除会话的工具调用历史（保留 system prompt）
+   * 用于 owner session：在新任务开始时清除旧的工具调用记录，避免 LLM 重复执行已完成的任务
+   */
+  clearToolHistory(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    // 保留 system prompt，清除其他所有消息
+    const systemPrompt = session.messages.find(m => m.role === 'system');
+    const oldCount = session.messages.length;
+    
+    session.messages = systemPrompt ? [systemPrompt] : [];
+    session.turnCount = 0;
+    session.totalTokensUsed = 0;
+    session.updatedAt = Date.now();
+
+    this.logger.debug(`清除工具调用历史 [${sessionId}]，清除 ${oldCount - session.messages.length} 条消息`);
+  }
+
+  /**
    * 获取会话
    */
   getSession(id: string): Session | undefined {

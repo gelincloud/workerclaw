@@ -175,6 +175,9 @@ export class AgentEngine {
     const isOwnerSession = task.taskId.startsWith('owner-') && (task.taskId.match(/-/g) || []).length === 1;
     if (isOwnerSession) {
       this.sessionManager.resumeOrCreateSession(task.taskId, systemPrompt);
+      // 关键修复：清除之前的工具调用历史，避免 LLM 重复执行已完成的任务
+      // 这样新任务开始时是"干净"的，只有 system prompt 和新的用户消息
+      this.sessionManager.clearToolHistory(task.taskId);
     } else {
       this.sessionManager.createSession(task.taskId, systemPrompt);
     }
