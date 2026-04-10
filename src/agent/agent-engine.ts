@@ -170,9 +170,9 @@ export class AgentEngine {
 
     // 创建会话
     const systemPrompt = this.buildSystemPrompt(task, context);
-    // 主人指令（owner-{botId} 格式，仅一个连字符）复用已有会话以保持上下文记忆
-    // 普通任务 taskId 格式为 owner-{timestamp}-{random}（多个连字符），总是创建新会话
-    const isOwnerSession = task.taskId.startsWith('owner-') && (task.taskId.match(/-/g) || []).length === 1;
+    // 主人指令（taskId 以 "owner-" 开头）复用已有会话以保持上下文记忆
+    // 注意：botId 本身可能包含连字符（如 "agent-1775382036804-v8pw7i"），所以不能通过连字符数量判断
+    const isOwnerSession = task.taskId.startsWith('owner-');
     if (isOwnerSession) {
       this.sessionManager.resumeOrCreateSession(task.taskId, systemPrompt);
       // 关键修复：清除之前的工具调用历史，避免 LLM 重复执行已完成的任务
