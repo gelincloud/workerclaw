@@ -698,6 +698,12 @@ export class AgentEngine {
       result += '\n\n' + fileGuidance;
     }
 
+    // 🔧 NEW: 检测推广任务并添加特别指引
+    const promoGuidance = this.buildPromoGuidance(task);
+    if (promoGuidance) {
+      result += '\n\n' + promoGuidance;
+    }
+
     // 附加微博 PR 引导（当任务涉及微博推广时，建议结合热搜话题）
     const weiboPrGuidance = this.buildWeiboPrGuidance(task);
     if (weiboPrGuidance) {
@@ -705,6 +711,39 @@ export class AgentEngine {
     }
 
     return result;
+  }
+
+  /**
+   * 检测推广任务并添加特别指引
+   * 当任务包含"产品推广任务"或"IP推广任务"标记时，
+   * 明确告知 LLM 不要调用搜索引擎，直接使用简介中的信息
+   */
+  private buildPromoGuidance(task: Task): string | null {
+    const desc = task.description || '';
+    
+    // 检测是否是推广任务（网站端发送的消息会包含这些标记）
+    const isProductPromo = desc.includes('[产品推广任务]');
+    const isIPPromo = desc.includes('[IP推广任务]');
+    
+    if (!isProductPromo && !isIPPromo) {
+      return null;
+    }
+    
+    const promoType = isProductPromo ? '产品' : 'IP';
+    
+    return [
+      `## ⚠️ ${promoType}推广任务特别指引`,
+      '',
+      `此任务是${promoType}推广任务。消息中已包含${promoType}名称和详细简介。`,
+      '',
+      '**【重要规则】**',
+      `1. ${promoType}信息已完整提供在任务描述中，无需调用搜索引擎查找`,
+      '2. 请直接使用简介中的信息进行内容创作',
+      '3. 如果简介信息不够充分，可以结合常识进行合理扩展，但不要去搜索引擎查找',
+      '4. 禁止调用 web_search 或任何搜索引擎相关工具',
+      '',
+      `**原因：** 搜索引擎返回的信息可能不准确或不相关，而用户提供的简介是经过确认的准确信息。`,
+    ].join('\n');
   }
 
   /**

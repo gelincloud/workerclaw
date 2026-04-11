@@ -1843,11 +1843,10 @@ async function handlePublishCommand(
       `, { workspace });
       console.log(`[handlePublishCommand] 发布点击结果:`, publishResult);
 
-      // 步骤6：截图确认
+      // 等待发布完成
       await randomDelay(3000, 5000);
-      const screenshot = await client.screenshot({ workspace });
 
-      // 激活窗口
+      // 激活窗口让用户查看结果
       try {
         await client.focusWindow(workspace);
         console.log(`[handlePublishCommand] 窗口已激活`);
@@ -1873,9 +1872,7 @@ async function handlePublishCommand(
 
 **结果**: ${(publishResult as any)?.clicked ? '✅ 文章已成功发布到抖音！任务完成，不需要重复发布。' : '⚠️ 发布按钮未点击成功，请检查浏览器手动发布。'}
 
-**重要提示**: 本次发布任务已完成。如果用户需要发布更多内容，请等待用户明确指示。不要主动重复发布相同或类似内容。
-
-截图已保存（base64，前100字符）: ${screenshot.substring(0, 100)}...`,
+**重要提示**: 本次发布任务已完成。如果用户需要发布更多内容，请等待用户明确指示。不要主动重复发布相同或类似内容。`,
       };
     }
 

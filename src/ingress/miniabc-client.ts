@@ -18,8 +18,16 @@
 import WebSocket from 'ws';
 import { createLogger, type Logger } from '../core/logger.js';
 import { EventBus, WorkerClawEvent } from '../core/events.js';
-import type { PlatformConfig } from '../core/config.js';
+import type { PlatformConfig, WorkerClawConfig } from '../core/config.js';
 import type { PlatformMessage } from '../types/message.js';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+/** WorkerClaw 数据目录 */
+const WORKERCLAW_DIR = join(homedir(), '.workerclaw');
+/** 配置文件路径 */
+const CONFIG_PATH = join(WORKERCLAW_DIR, 'config.json');
 
 export interface MiniABCClientOptions {
   config: PlatformConfig;
@@ -158,6 +166,11 @@ export class MiniABCClient {
       case 'pong':
         // 心跳响应
         this.logger.debug('收到 PONG');
+        break;
+
+      case 'config_request':
+        // 远程配置请求（从网站服务器发来）
+        this.handleConfigRequest(message);
         break;
 
       case 'new_task':
@@ -391,6 +404,118 @@ export class MiniABCClient {
         });
         this.ws!.close(1000, 'Client shutdown');
       });
+    }
+  }
+
+  /**
+   * 处理远程配置请求
+   */
+  private handleConfigRequest(message: PlatformMessage): void {
+    const { requestId, action, config: newConfig } = message.data || {};
+
+    if (!requestId) {
+      this.logger.warn('配置请求缺少 requestId');
+      return;
+    }
+
+    try {
+      if (action === 'get') {
+        // 读取配置
+        const config = this.loadConfig();
+        this.send({
+          type: 'config_response',
+          payload: {
+            requestId,
+            config,
+          },
+          timestamp: Date.now(),
+        });
+        this.logger.info(`已响应配置读取请求: ${requestId}`);
+      } else if (action === 'set') {
+        // 更新配置
+        if (!newConfig) {
+          this.send({
+            type: 'config_response',
+            payload: {
+              requestId,
+              error: '缺少配置数据',
+            },
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
+        this.saveConfig(newConfig);
+        this.send({
+          type: 'config_response',
+          payload: {
+            requestId,
+            success: true,
+          },
+          timestamp: Date.now(),
+        });
+        this.logger.info(`已响应配置更新请求: ${requestId}`);
+
+        // 提示需要重启
+        this.logger.warn('配置已更新，重启后生效');
+      } else {
+        this.send({
+          type: 'config_response',
+          payload: {
+            requestId,
+            error: `未知操作: ${action}`,
+          },
+          timestamp: Date.now(),
+        });
+      }
+    } catch (err: any) {
+      this.logger.error('处理配置请求失败', err);
+      this.send({
+        type: 'config_response',
+        payload: {
+          requestId,
+          error: err.message || '处理失败',
+        },
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  /**
+   * 加载配置文件
+   */
+  private loadConfig(): Partial<WorkerClawConfig> {
+    try {
+      if (existsSync(CONFIG_PATH)) {
+        const content = readFileSync(CONFIG_PATH, 'utf-8');
+        return JSON.parse(content);
+      }
+      return {};
+    } catch (err) {
+      this.logger.error('加载配置失败', err);
+      return {};
+    }
+  }
+
+  /**
+   * 保存配置文件
+   */
+  private saveConfig(config: Partial<WorkerClawConfig>): void {
+    try {
+      // 确保目录存在
+      if (!existsSync(WORKERCLAW_DIR)) {
+        mkdirSync(WORKERCLAW_DIR, { recursive: true });
+      }
+
+      // 读取现有配置，合并更新
+      const existing = this.loadConfig();
+      const merged = { ...existing, ...config };
+
+      writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
+      this.logger.info(`配置已保存: ${CONFIG_PATH}`);
+    } catch (err) {
+      this.logger.error('保存配置失败', err);
+      throw err;
     }
   }
 }
