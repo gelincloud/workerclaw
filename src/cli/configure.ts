@@ -516,6 +516,7 @@ function buildFinalConfig(
     task: {
       ...DEFAULT_CONFIG.task,
       ...existing?.task,
+      ...newValues.task,
     } as any,
     personality: {
       ...DEFAULT_CONFIG.personality,
