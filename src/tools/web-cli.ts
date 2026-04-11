@@ -22,6 +22,177 @@ import type { WebCliConfig } from '../core/config.js';
 
 const logger = createLogger('WebCli');
 
+// ==================== 平台登录态保活服务 ====================
+
+/**
+ * 平台保活服务
+ * 
+ * 独立的后台服务，不依赖发文任务。
+ * 用户长时间不操作时，自动刷新页面保持登录态。
+ * 
+ * 使用方式：
+ * - web_cli keepalive/start douyin  - 启动抖音保活
+ * - web_cli keepalive/stop douyin   - 停止抖音保活
+ * - web_cli keepalive/status        - 查看保活状态
+ */
+
+interface KeepaliveTask {
+  site: string;
+  keepaliveUrl: string;
+  intervalMs: number;
+  startTime: number;
+  lastRefreshTime: number;
+  refreshCount: number;
+  status: 'running' | 'stopped';
+}
+
+// 保活任务存储（进程内）
+const keepaliveTasks = new Map<string, KeepaliveTask>();
+// 保活定时器
+const keepaliveTimers = new Map<string, NodeJS.Timeout>();
+
+// 各平台保活配置
+const KEEPALIVE_CONFIGS: Record<string, { url: string; intervalMs: number }> = {
+  douyin: {
+    url: 'https://creator.douyin.com/creator-micro/content/upload?default-tab=5',
+    intervalMs: 5 * 60 * 1000,  // 5分钟
+  },
+  // 可扩展其他平台
+  // xiaohongshu: { url: '...', intervalMs: ... },
+  // weibo: { url: '...', intervalMs: ... },
+};
+
+/**
+ * 启动平台保活服务
+ */
+async function startKeepaliveService(
+  site: string,
+  client: BrowserBridgeClient,
+  localConfig?: BridgeClientConfig
+): Promise<{ success: boolean; message: string }> {
+  const config = KEEPALIVE_CONFIGS[site];
+  if (!config) {
+    return { success: false, message: `不支持的平台: ${site}。支持: ${Object.keys(KEEPALIVE_CONFIGS).join(', ')}` };
+  }
+
+  // 已在运行，先停止
+  if (keepaliveTasks.has(site)) {
+    stopKeepaliveService(site);
+  }
+
+  const task: KeepaliveTask = {
+    site,
+    keepaliveUrl: config.url,
+    intervalMs: config.intervalMs,
+    startTime: Date.now(),
+    lastRefreshTime: 0,
+    refreshCount: 0,
+    status: 'running',
+  };
+
+  // 创建独立的客户端实例，避免超时问题
+  const keepaliveClient = new BrowserBridgeClient({
+    ...localConfig,
+    timeout: 30000,  // 保活请求30秒超时
+  });
+
+  // 启动定时器
+  const timer = setInterval(async () => {
+    const currentTask = keepaliveTasks.get(site);
+    if (!currentTask || currentTask.status !== 'running') {
+      return;
+    }
+
+    try {
+      // 使用固定的 workspace 避免窗口堆积
+      const workspace = `keepalive_${site}`;
+      
+      logger.info(`[保活服务] ${site} 执行保活刷新...`);
+      
+      // 导航到保活页面
+      await keepaliveClient.navigate(config.url, { workspace });
+      
+      // 等待页面加载
+      await new Promise(r => setTimeout(r, 2000));
+      
+      // 更新任务状态
+      currentTask.lastRefreshTime = Date.now();
+      currentTask.refreshCount++;
+      
+      logger.info(`[保活服务] ${site} 保活成功 (第${currentTask.refreshCount}次)`);
+      
+      // 关闭窗口（避免窗口堆积）
+      try {
+        await keepaliveClient.closeWindow(workspace);
+      } catch {}
+      
+    } catch (err) {
+      logger.warn(`[保活服务] ${site} 保活失败`, { error: (err as Error).message });
+    }
+  }, config.intervalMs);
+
+  keepaliveTimers.set(site, timer);
+  keepaliveTasks.set(site, task);
+
+  // 立即执行一次刷新
+  try {
+    const workspace = `keepalive_${site}`;
+    await keepaliveClient.navigate(config.url, { workspace });
+    task.lastRefreshTime = Date.now();
+    task.refreshCount = 1;
+    try { await keepaliveClient.closeWindow(workspace); } catch {}
+    logger.info(`[保活服务] ${site} 初始保活成功`);
+  } catch (err) {
+    logger.warn(`[保活服务] ${site} 初始保活失败`, { error: (err as Error).message });
+  }
+
+  return {
+    success: true,
+    message: `${site} 保活服务已启动，每 ${config.intervalMs / 1000 / 60} 分钟刷新一次`,
+  };
+}
+
+/**
+ * 停止平台保活服务
+ */
+function stopKeepaliveService(site: string): { success: boolean; message: string } {
+  const task = keepaliveTasks.get(site);
+  const timer = keepaliveTimers.get(site);
+  
+  if (!task && !timer) {
+    return { success: false, message: `${site} 保活服务未运行` };
+  }
+
+  if (timer) {
+    clearInterval(timer);
+    keepaliveTimers.delete(site);
+  }
+  
+  if (task) {
+    task.status = 'stopped';
+    keepaliveTasks.delete(site);
+  }
+
+  const elapsed = task ? Math.round((Date.now() - task.startTime) / 1000 / 60) : 0;
+  const count = task?.refreshCount || 0;
+
+  return {
+    success: true,
+    message: `${site} 保活服务已停止。运行时间: ${elapsed}分钟，刷新次数: ${count}`,
+  };
+}
+
+/**
+ * 获取保活服务状态
+ */
+function getKeepaliveStatus(): { tasks: KeepaliveTask[] } {
+  const tasks = Array.from(keepaliveTasks.values()).map(task => ({
+    ...task,
+    runningTime: Math.round((Date.now() - task.startTime) / 1000 / 60),  // 分钟
+  }));
+  return { tasks };
+}
+
 // ==================== 反爬虫工具函数 ====================
 
 /**
@@ -136,6 +307,9 @@ async function executeLocalMode(
   const { site, command, query, limit, ...extra } = params;
   const platformUrl = context?.config?.webCli?.platformUrl || 'https://www.miniabc.top';
 
+  // 调试日志：显示收到的参数
+  logger.info(`[web_cli] 本地模式调用: site=${site}, command=${command}, query=${query}, extra=${JSON.stringify(extra)}`);
+
   if (!site || !command) {
     return { 
       toolCallId, 
@@ -158,8 +332,21 @@ async function executeLocalMode(
       };
     }
 
-    // 检查扩展是否连接
-    if (!await client.isExtensionConnected()) {
+    // 检查扩展是否连接（最多等待 10 秒）
+    let extensionConnected = await client.isExtensionConnected();
+    if (!extensionConnected) {
+      console.log('[web_cli] 扩展未连接，等待连接...');
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        extensionConnected = await client.isExtensionConnected();
+        if (extensionConnected) {
+          console.log(`[web_cli] 扩展已连接（等待 ${i + 1} 秒）`);
+          break;
+        }
+      }
+    }
+
+    if (!extensionConnected) {
       return {
         toolCallId,
         success: false,
@@ -177,6 +364,9 @@ async function executeLocalMode(
     } else if (site === 'cookies') {
       // Cookie 操作
       return await handleCookiesCommand(client, command, params, toolCallId);
+    } else if (site === 'keepalive') {
+      // 保活服务操作（独立于发文流程）
+      return await handleKeepaliveCommand(client, command, params, toolCallId, localConfig);
     } else {
       // 其他站点：根据命令类型处理
       return await handleSiteCommand(client, site, command, params, workspace, toolCallId, localConfig);
@@ -317,6 +507,89 @@ async function handleCookiesCommand(
 }
 
 /**
+ * 处理保活服务命令
+ * 
+ * 用法：
+ * - keepalive/start douyin  - 启动抖音保活
+ * - keepalive/stop douyin   - 停止抖音保活  
+ * - keepalive/status        - 查看所有保活状态
+ */
+async function handleKeepaliveCommand(
+  client: BrowserBridgeClient,
+  command: string,
+  params: Record<string, any>,
+  toolCallId: string,
+  localConfig?: BridgeClientConfig
+): Promise<ToolResult> {
+  switch (command) {
+    case 'start': {
+      const site = params.site || params.platform;
+      if (!site) {
+        return {
+          toolCallId,
+          success: false,
+          content: '缺少参数: site（平台名称，如 douyin）',
+          error: 'missing_site',
+        };
+      }
+      const result = await startKeepaliveService(site, client, localConfig);
+      return {
+        toolCallId,
+        success: result.success,
+        content: result.message,
+        error: result.success ? undefined : 'keepalive_error',
+      };
+    }
+
+    case 'stop': {
+      const site = params.site || params.platform;
+      if (!site) {
+        return {
+          toolCallId,
+          success: false,
+          content: '缺少参数: site（平台名称，如 douyin）',
+          error: 'missing_site',
+        };
+      }
+      const result = stopKeepaliveService(site);
+      return {
+        toolCallId,
+        success: result.success,
+        content: result.message,
+        error: result.success ? undefined : 'keepalive_error',
+      };
+    }
+
+    case 'status': {
+      const status = getKeepaliveStatus();
+      if (status.tasks.length === 0) {
+        return {
+          toolCallId,
+          success: true,
+          content: '当前没有运行中的保活服务。\n\n使用 keepalive/start douyin 启动抖音保活',
+        };
+      }
+      const lines = status.tasks.map(t => 
+        `${t.site}: 运行中，已运行 ${Math.round((Date.now() - t.startTime) / 1000 / 60)} 分钟，刷新 ${t.refreshCount} 次`
+      );
+      return {
+        toolCallId,
+        success: true,
+        content: `保活服务状态:\n\n${lines.join('\n')}\n\n使用 keepalive/stop <site> 停止指定平台的保活`,
+      };
+    }
+
+    default:
+      return {
+        toolCallId,
+        success: false,
+        content: `未知的保活命令: ${command}\n\n可用命令:\n- keepalive/start <site>  启动保活\n- keepalive/stop <site>   停止保活\n- keepalive/status        查看状态`,
+        error: 'unknown_command',
+      };
+  }
+}
+
+/**
  * 处理站点命令（小红书、微博等）
  * 
  * 本地模式下，通过本地浏览器执行操作：
@@ -381,6 +654,35 @@ async function handleSiteCommand(
     return await handleHotCommand(client, site, workspace, toolCallId);
   }
 
+  // 抖音特殊命令处理
+  if (site === 'douyin') {
+    // 抖音发文已在上面的 publish/post 分支处理
+    // 这里处理其他抖音命令
+
+    // 抖音热榜
+    if (command === 'hot' || command === 'trending' || command === 'discover') {
+      return await handleHotCommand(client, site, workspace, toolCallId);
+    }
+
+    // 抖音搜索
+    if (command === 'search') {
+      return await handleSearchCommand(client, site, query, workspace, toolCallId);
+    }
+
+    // 其他抖音命令（如 hashtag、user 等）：需要提示用户使用平台模式
+    return {
+      toolCallId,
+      success: false,
+      content: `本地模式下抖音仅支持以下命令：
+- douyin/publish 或 douyin/post - 发布文章
+- douyin/hot - 查看热榜
+- douyin/search - 搜索内容
+
+命令 "${command}" 需要通过平台模式调用。请在配置中设置 webCli.mode: "platform"`,
+      error: 'unsupported_command',
+    };
+  }
+
   // 其他命令：不支持的命令
   return {
     toolCallId,
@@ -390,9 +692,10 @@ async function handleSiteCommand(
 **本地模式可用命令**:
 - browser/navigate, browser/exec, browser/screenshot, browser/evaluate
 - cookies/get
-- 发布类命令：xiaohongshu/publish, weibo/post, zhihu/post_article
+- keepalive/start, keepalive/stop, keepalive/status - 登录态保活
+- 发布类命令：xiaohongshu/publish, weibo/post, zhihu/post_article, douyin/publish
 - 搜索类命令：xiaohongshu/search, weibo/search, zhihu/search
-- 热门内容：xiaohongshu/hot, weibo/hot_search, zhihu/hot（通过本地浏览器）
+- 热门内容：xiaohongshu/hot, weibo/hot_search, zhihu/hot, douyin/hot
 
 如需使用更多命令，请切换到平台模式 (webCli.mode: "platform")。`,
     error: 'unsupported_command',
@@ -412,6 +715,7 @@ async function handleHotCommand(
     xiaohongshu: 'https://www.xiaohongshu.com/explore',
     weibo: 'https://s.weibo.com/top/summary',
     zhihu: 'https://www.zhihu.com/hot',
+    douyin: 'https://www.douyin.com/discover',
   };
 
   const hotUrl = HOT_URLS[site];
@@ -435,7 +739,8 @@ async function handleHotCommand(
         const selectors = {
           xiaohongshu: 'section.note-item, a[href*="/explore/"]',
           weibo: '.td-02 a, .data a',
-          zhihu: '.HotList-item, .HotItem'
+          zhihu: '.HotList-item, .HotItem',
+          douyin: '.video-card, .recommend-list-item, [class*="video"]'
         };
         const selector = selectors['${site}'];
         document.querySelectorAll(selector).forEach((el, i) => {
@@ -500,6 +805,7 @@ async function handlePublishCommand(
     xiaohongshu: 'https://creator.xiaohongshu.com/publish/publish',
     weibo: 'https://weibo.com',
     zhihu: 'https://www.zhihu.com/',
+    douyin: 'https://creator.douyin.com/creator-micro/content/upload?default-tab=5',
   };
 
   const publishUrl = PUBLISH_URLS[site];
@@ -887,7 +1193,9 @@ async function handlePublishCommand(
 6. ${nextResult?.clicked ? '✅' : '⚠️'} 点击"下一步": ${JSON.stringify(nextResult)}
 7. ${publishResult?.clicked ? '✅' : '⚠️'} 点击"发布": ${JSON.stringify(publishResult)}
 
-**结果**: 发布流程已完成。浏览器窗口已激活到前台，请确认发布状态。
+**结果**: ${publishResult?.clicked ? '✅ 笔记已成功发布到小红书！任务完成，不需要重复发布。' : '⚠️ 发布按钮未点击成功，请检查浏览器手动发布。'}
+
+**重要提示**: 本次发布任务已完成。如果用户需要发布更多内容，请等待用户明确指示。不要主动重复发布相同或类似内容。
 
 截图已保存（base64，前100字符）: ${screenshot.substring(0, 100)}...`,
       };
@@ -1215,6 +1523,362 @@ async function handlePublishCommand(
       };
     }
 
+    // ========== 抖音发布流程 ==========
+    if (site === 'douyin') {
+      console.log(`[handlePublishCommand] 抖音发布流程开始`);
+
+      // 抖音创作者中心已导航，直接检查页面
+      await randomDelay(3000, 5000);
+
+      // 步骤2：点击"我要发文"按钮（抖音创作者中心的选择发布方式页面）
+      console.log(`[handlePublishCommand] 步骤2: 点击"我要发文"按钮`);
+      const openArticleResult = await client.exec(`
+        (function() {
+          var result = { foundButtons: [], clicked: false, clickedText: '', debug: '' };
+
+          // 抖音创作者中心的"选择发布方式"页面有以下按钮：
+          // - 发布视频、发图文、发文章（这些是左侧导航菜单，不要点）
+          // - 我要发文、一键导入（这些是"选择发布方式"页面的按钮，需要点击"我要发文"）
+          
+          var buttons = document.querySelectorAll('button, [role="button"], a, div, span');
+          for (var i = 0; i < buttons.length; i++) {
+            var btn = buttons[i];
+            var text = (btn.innerText || btn.textContent || '').trim();
+
+            // 收集所有短文本按钮
+            if (text.length > 0 && text.length <= 20) {
+              result.foundButtons.push(text);
+
+              // 精确匹配"我要发文"按钮（选择发布方式页面）
+              if (text === '我要发文') {
+                btn.click();
+                result.clicked = true;
+                result.clickedText = text;
+                result.debug = 'clicked: 我要发文';
+                return result;
+              }
+            }
+          }
+
+          // 如果没找到"我要发文"，尝试匹配"发文章"（可能是另一种页面布局）
+          for (var i = 0; i < buttons.length; i++) {
+            var btn = buttons[i];
+            var text = (btn.innerText || btn.textContent || '').trim();
+
+            // 注意：排除左侧导航菜单的"发布文章"（那是菜单项，不是操作按钮）
+            if (text === '发文章' && text.indexOf('发布') === -1) {
+              btn.click();
+              result.clicked = true;
+              result.clickedText = text;
+              result.debug = 'clicked: 发文章';
+              return result;
+            }
+          }
+
+          result.debug = '我要发文 button not found. Found buttons: ' + result.foundButtons.join(', ');
+          return result;
+        })()
+      `, { workspace });
+      console.log(`[handlePublishCommand] 点击"我要发文"结果:`, openArticleResult);
+
+      await randomDelay(3000, 5000);
+
+      // 步骤3：填写文章内容
+      console.log(`[handlePublishCommand] 步骤3: 填写文章内容`);
+      const fillResult = await client.exec(`
+        (function() {
+          var result = { 
+            titleFilled: false, 
+            contentFilled: false, 
+            debug: '',
+            foundInputs: []
+          };
+
+          var title = \`${(title || '').replace(/`/g, '\\`').replace(/\n/g, '\\n')}\`;
+          var content = \`${(content || '').replace(/`/g, '\\`').replace(/\n/g, '\\n')}\`;
+
+          // 查找所有输入框，收集调试信息
+          var allInputs = document.querySelectorAll('input, textarea, [contenteditable="true"]');
+          for (var i = 0; i < allInputs.length; i++) {
+            var inp = allInputs[i];
+            var placeholder = inp.getAttribute('placeholder') || '';
+            var label = inp.getAttribute('aria-label') || '';
+            var rect = inp.getBoundingClientRect();
+            result.foundInputs.push({
+              tag: inp.tagName,
+              ph: placeholder,
+              label: label,
+              visible: rect.width > 0 && rect.height > 0,
+              height: rect.height
+            });
+          }
+
+          // 1. 填写文章标题
+          // 抖音文章标题：input[placeholder*="请输入文章标题"]
+          // 抖音使用 Semi-UI 框架，需要使用 native input value setter 来触发 React 状态更新
+          
+          // 先尝试精确匹配 placeholder
+          var titleInput = document.querySelector('input[placeholder*="请输入文章标题"]');
+          if (!titleInput) {
+            // 回退：匹配包含"标题"的 input
+            titleInput = document.querySelector('input[placeholder*="标题"]');
+          }
+          if (!titleInput) {
+            // 再回退：匹配所有 input，通过 placeholder 判断
+            var allInputs = document.querySelectorAll('input[type="text"]');
+            for (var i = 0; i < allInputs.length; i++) {
+              var inp = allInputs[i];
+              var ph = inp.getAttribute('placeholder') || '';
+              if (ph.indexOf('标题') !== -1) {
+                titleInput = inp;
+                break;
+              }
+            }
+          }
+          
+          if (titleInput) {
+            titleInput.focus();
+            
+            // 使用 native input value setter 来触发 React 状态更新
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            nativeInputValueSetter.call(titleInput, title);
+            
+            // 触发多种事件确保框架捕获
+            titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+            titleInput.dispatchEvent(new Event('change', { bubbles: true }));
+            
+            // 对于 Semi-UI，可能还需要触发 keydown/keyup 事件
+            titleInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+            titleInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+            
+            titleInput.blur();
+            result.titleFilled = true;
+            result.debug += 'title filled; ';
+          } else {
+            result.debug += 'title input not found; ';
+          }
+
+          // 2. 填写文章正文
+          var contentEditors = document.querySelectorAll('textarea, [contenteditable="true"]');
+          for (var i = 0; i < contentEditors.length; i++) {
+            var editor = contentEditors[i];
+            var ph = editor.getAttribute('placeholder') || '';
+            var rect = editor.getBoundingClientRect();
+            
+            // 跳过搜索框和不可见的
+            if (ph.indexOf('搜索') !== -1) continue;
+            if (rect.width === 0 || rect.height === 0) continue;
+
+            // 判断是否是正文编辑器（通常较大）
+            if (rect.height > 100 || ph.indexOf('正文') !== -1 || ph.indexOf('内容') !== -1 || ph.indexOf('添加正文') !== -1) {
+              editor.focus();
+              if (editor.tagName === 'TEXTAREA') {
+                var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                nativeSetter.call(editor, content);
+              } else {
+                // 对于 contenteditable，需要更彻底地设置
+                editor.textContent = content;
+                editor.innerHTML = content.replace(/\\n/g, '<br>');
+              }
+              editor.dispatchEvent(new Event('input', { bubbles: true }));
+              editor.dispatchEvent(new Event('change', { bubbles: true }));
+              editor.blur();
+              result.contentFilled = true;
+              result.debug += 'content filled; ';
+              break;
+            }
+          }
+
+          return result;
+        })()
+      `, { workspace });
+      console.log(`[handlePublishCommand] 填写文章结果:`, fillResult);
+
+      await randomDelay(2000, 3000);
+
+      // 步骤4：点击"AI配图"按钮
+      console.log(`[handlePublishCommand] 步骤4: 点击AI配图`);
+      const aiImageResult = await client.exec(`
+        (function() {
+          var result = { foundButtons: [], clicked: false, clickedText: '', debug: '' };
+
+          // 抖音文章编辑器的 AI配图 DOM 结构：
+          // <span class="iconContainer-IO2yut">
+          //   <span class="mycard-info-text-icon-fVsMvA">...</span>
+          //   "AI 配图"  ← 这是文本节点
+          // </span>
+          // "AI 配图" 是文本节点，不是元素节点，需要用其他方式定位
+          
+          // 方法1：通过 class 名查找 iconContainer
+          var iconContainers = document.querySelectorAll('[class*="iconContainer"]');
+          for (var i = 0; i < iconContainers.length; i++) {
+            var container = iconContainers[i];
+            var text = (container.innerText || container.textContent || '').trim();
+            
+            if (text.indexOf('AI 配图') !== -1 || text.indexOf('AI配图') !== -1) {
+              container.click();
+              result.clicked = true;
+              result.clickedText = text;
+              result.debug = 'clicked iconContainer with AI 配图';
+              return result;
+            }
+          }
+          
+          // 方法2：查找包含 "AI 配图" 文本的 span 元素（通过遍历所有 span）
+          var allSpans = document.querySelectorAll('span');
+          for (var i = 0; i < allSpans.length; i++) {
+            var span = allSpans[i];
+            var text = (span.innerText || span.textContent || '').trim();
+            
+            if (text.length > 0 && text.length <= 20) {
+              result.foundButtons.push(text);
+            }
+            
+            // 匹配 "AI 配图" 或 "AI配图"
+            if (text === 'AI 配图' || text === 'AI配图') {
+              span.click();
+              result.clicked = true;
+              result.clickedText = text;
+              result.debug = 'clicked span with exact AI 配图 text';
+              return result;
+            }
+          }
+          
+          // 方法3：查找父元素包含 "AI 配图" 的组合按钮
+          var buttons = document.querySelectorAll('button, div[class*="upload"], div[class*="mycard"], [role="button"]');
+          for (var i = 0; i < buttons.length; i++) {
+            var btn = buttons[i];
+            var text = (btn.innerText || btn.textContent || '').trim();
+            
+            if (text.indexOf('AI 配图') !== -1 || text.indexOf('AI配图') !== -1) {
+              // 查找按钮内的 "AI 配图" 子元素
+              var children = btn.querySelectorAll('*');
+              for (var j = 0; j < children.length; j++) {
+                var child = children[j];
+                var childText = (child.innerText || child.textContent || '').trim();
+                if (childText === 'AI 配图' || childText === 'AI配图') {
+                  child.click();
+                  result.clicked = true;
+                  result.clickedText = childText;
+                  result.debug = 'clicked child element with AI 配图';
+                  return result;
+                }
+              }
+              
+              // 回退：直接点击父元素
+              btn.click();
+              result.clicked = true;
+              result.clickedText = text.substring(0, 30);
+              result.debug = 'clicked parent container';
+              return result;
+            }
+          }
+
+          result.debug = 'AI配图 button not found';
+          return result;
+        })()
+      `, { workspace });
+      console.log(`[handlePublishCommand] AI配图结果:`, aiImageResult);
+
+      // 等待AI生成图片（AI配图需要约13秒，为保险起见等待18-20秒）
+      console.log(`[handlePublishCommand] 等待AI生成图片（18-20秒）...`);
+      await randomDelay(18000, 20000);
+
+      // 步骤4.5：确认封面已生成，如果没有则再次尝试
+      console.log(`[handlePublishCommand] 步骤4.5: 检查封面是否已生成`);
+      const coverCheckResult = await client.exec(`
+        (function() {
+          var result = { hasCover: false, debug: '', foundImages: [] };
+          
+          // 检查是否有封面图片（查找已生成的封面区域）
+          var coverAreas = document.querySelectorAll('[class*="cover"], [class*="image"], img');
+          for (var i = 0; i < coverAreas.length; i++) {
+            var area = coverAreas[i];
+            var rect = area.getBoundingClientRect();
+            if (rect.width > 50 && rect.height > 50) {
+              result.foundImages.push({
+                tag: area.tagName,
+                src: area.src || '',
+                className: area.className.substring(0, 50)
+              });
+              result.hasCover = true;
+            }
+          }
+          
+          result.debug = result.hasCover ? 'cover found' : 'no cover found';
+          return result;
+        })()
+      `, { workspace });
+      console.log(`[handlePublishCommand] 封面检查结果:`, coverCheckResult);
+
+      // 步骤5：点击发布按钮
+      console.log(`[handlePublishCommand] 步骤5: 点击发布`);
+      const publishResult = await client.exec(`
+        (function() {
+          var result = { foundButtons: [], clicked: false, clickedText: '', debug: '' };
+
+          // 查找发布按钮
+          var buttons = document.querySelectorAll('button, [role="button"]');
+          for (var i = 0; i < buttons.length; i++) {
+            var btn = buttons[i];
+            var text = (btn.innerText || btn.textContent || '').trim();
+            var disabled = btn.disabled || btn.getAttribute('disabled');
+
+            if (text.length > 0 && text.length <= 10) {
+              result.foundButtons.push(text + (disabled ? '(disabled)' : ''));
+
+              if (text === '发布' && !disabled) {
+                btn.click();
+                result.clicked = true;
+                result.clickedText = text;
+                result.debug = 'clicked publish';
+                return result;
+              }
+            }
+          }
+
+          result.debug = 'publish button not found or disabled';
+          return result;
+        })()
+      `, { workspace });
+      console.log(`[handlePublishCommand] 发布点击结果:`, publishResult);
+
+      // 步骤6：截图确认
+      await randomDelay(3000, 5000);
+      const screenshot = await client.screenshot({ workspace });
+
+      // 激活窗口
+      try {
+        await client.focusWindow(workspace);
+        console.log(`[handlePublishCommand] 窗口已激活`);
+      } catch (err) {
+        console.log(`[handlePublishCommand] 窗口激活失败:`, err);
+      }
+
+      return {
+        toolCallId,
+        success: true,
+        content: `抖音文章发布流程完成！
+
+**标题**: ${title}
+**内容**: ${content?.substring(0, 100)}${content && content.length > 100 ? '...' : ''}
+
+**执行步骤**:
+1. ✅ 导航到抖音创作者中心
+2. ${(openArticleResult as any)?.clicked ? '✅' : '⚠️'} 打开发布文章页面: ${JSON.stringify(openArticleResult)}
+3. ${(fillResult as any)?.titleFilled ? '✅' : '⚠️'} 填写标题: ${JSON.stringify(fillResult)}
+4. ${(fillResult as any)?.contentFilled ? '✅' : '⚠️'} 填写正文
+5. ${(aiImageResult as any)?.clicked ? '✅' : '⚠️'} 点击AI配图: ${JSON.stringify(aiImageResult)}
+6. ${(publishResult as any)?.clicked ? '✅' : '⚠️'} 点击发布: ${JSON.stringify(publishResult)}
+
+**结果**: ${(publishResult as any)?.clicked ? '✅ 文章已成功发布到抖音！任务完成，不需要重复发布。' : '⚠️ 发布按钮未点击成功，请检查浏览器手动发布。'}
+
+**重要提示**: 本次发布任务已完成。如果用户需要发布更多内容，请等待用户明确指示。不要主动重复发布相同或类似内容。
+
+截图已保存（base64，前100字符）: ${screenshot.substring(0, 100)}...`,
+      };
+    }
+
     return {
       toolCallId,
       success: true,
@@ -1255,6 +1919,7 @@ async function handleSearchCommand(
     xiaohongshu: (q: string) => `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(q)}`,
     weibo: (q: string) => `https://s.weibo.com/weibo/${encodeURIComponent(q)}`,
     zhihu: (q: string) => `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(q)}`,
+    douyin: (q: string) => `https://www.douyin.com/search/${encodeURIComponent(q)}`,
   };
 
   const urlFn = SEARCH_URLS[site];
@@ -1533,8 +2198,28 @@ function formatCliResult(
  * 让 Agent 动态发现平台当前支持的所有 CLI 命令，
  * 包含策略类型、是否只读、参数 schema 等元信息。
  */
-export function getWebCliDescribeToolDefinition(platformUrl?: string): ToolDefinition {
+export function getWebCliDescribeToolDefinition(platformUrl?: string, mode: 'local' | 'platform' = 'platform'): ToolDefinition {
   const baseUrl = platformUrl || 'https://www.miniabc.top';
+
+  // 本地模式支持的命令白名单
+  const LOCAL_SUPPORTED_COMMANDS: Record<string, string[]> = {
+    // 通用浏览器命令
+    'browser': ['navigate', 'exec', 'screenshot', 'evaluate', 'fetch'],
+    'cookies': ['get'],
+    'keepalive': ['start', 'stop', 'status'],
+
+    // 小红书
+    'xiaohongshu': ['publish', 'post', 'search', 'hot'],
+
+    // 微博
+    'weibo': ['post', 'search', 'hot_search', 'hot'],
+
+    // 知乎
+    'zhihu': ['post_article', 'search', 'hot'],
+
+    // 抖音
+    'douyin': ['publish', 'post', 'search', 'hot', 'trending', 'discover'],
+  };
 
   const executor: ToolExecutorFn = async (params, context) => {
     const toolCallId = (context as any)?.toolCallId || 'web_cli_describe';
@@ -1570,21 +2255,48 @@ export function getWebCliDescribeToolDefinition(platformUrl?: string): ToolDefin
         commands = commands.filter((c: any) => c.site === filterSite);
       }
 
-      // 格式化
+      // 本地模式下过滤命令
+      if (mode === 'local') {
+        commands = commands.filter((c: any) => {
+          const supportedCommands = LOCAL_SUPPORTED_COMMANDS[c.site];
+          if (!supportedCommands) return false;
+          return supportedCommands.includes(c.command);
+        });
+      }
+
+      // 格式化（本地模式下覆盖某些命令的描述）
+      const LOCAL_DESCRIPTION_OVERRIDES: Record<string, string> = {
+        'douyin/publish': '发布文章到抖音（本地模式支持文章发布，需要 title 和 content 参数）',
+        'xiaohongshu/publish': '发布笔记到小红书（需要 title 和 content 参数）',
+        'weibo/post': '发布微博文章（需要 title 和 content 参数）',
+        'zhihu/post_article': '发布知乎文章（需要 title 和 content 参数）',
+      };
+
       const lines = commands.map((c: any) => {
+        const key = `${c.site}/${c.command}`;
+        const description = mode === 'local' && LOCAL_DESCRIPTION_OVERRIDES[key]
+          ? LOCAL_DESCRIPTION_OVERRIDES[key]
+          : c.description;
         const readOnly = c.isReadOnly ? '只读' : '写操作';
-        return `  ${c.site}/${c.command}  [${c.strategy}]  ${readOnly}  — ${c.description}`;
+        const localTag = mode === 'local' ? '' : `  [${c.strategy}]`;
+        return `  ${c.site}/${c.command}${localTag}  ${readOnly}  — ${description}`;
       });
 
-      const statsInfo = `总计: ${result.stats.total} 个命令 (fetch=${result.stats.fetch}, browser=${result.stats.browser}, auth=${result.stats.auth})`;
+      const statsInfo = mode === 'local'
+        ? `本地模式支持: ${commands.length} 个命令`
+        : `总计: ${result.stats.total} 个命令 (fetch=${result.stats.fetch}, browser=${result.stats.browser}, auth=${result.stats.auth})`;
+
+      const localNote = mode === 'local'
+        ? '\n\n⚠️ 本地模式仅支持以上命令。其他命令需要平台模式 (webCli.mode: "platform")。\n📝 发布类命令需要 title 和 content 参数，用于发布文章/笔记。\n'
+        : '';
 
       const content = [
-        `CLI 命令列表${filterStrategy ? ` [${filterStrategy}]` : ''}${filterSite ? ` [${filterSite}]` : ''}:`,
+        `CLI 命令列表${mode === 'local' ? ' (本地模式)' : ''}${filterStrategy ? ` [${filterStrategy}]` : ''}${filterSite ? ` [${filterSite}]` : ''}:`,
         statsInfo,
         '',
         ...lines,
-        '',
-        '使用 web_cli 工具调用: { site, command, query, limit }',
+        localNote,
+        '使用 web_cli 工具调用: { site, command, query, limit, title, content }',
       ].join('\n');
 
       return { toolCallId, success: true, content };
@@ -1597,7 +2309,7 @@ export function getWebCliDescribeToolDefinition(platformUrl?: string): ToolDefin
 
   return {
     name: 'web_cli_describe',
-    description: `查看平台当前可用的 CLI 命令列表。动态发现平台支持的所有命令，包括 fetch（公开API）、browser（网页渲染）、auth（带登录态）三种策略。
+    description: `查看当前可用的 CLI 命令列表。${mode === 'local' ? '本地模式仅支持部分命令（发布、搜索、热榜）。' : '动态发现平台支持的所有命令，包括 fetch（公开API）、browser（网页渲染）、auth（带登录态）三种策略。'}
 参数: strategy (可选过滤: fetch/browser/auth), site (可选过滤: 站点名)`,
     requiredLevel: 'read_only',
     parameters: {

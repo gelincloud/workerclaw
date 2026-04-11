@@ -655,9 +655,10 @@ export function createDefaultToolRegistry(platformUrl?: string, mediaDir?: strin
   logger.info(`已注册 web_cli 通用代理工具 (模式: ${webCliConfig?.mode || 'platform'})`);
 
   // 注册 web_cli_describe 命令发现工具
-  const webCliDescribeTool = getWebCliDescribeToolDefinition();
+  const webCliMode = webCliConfig?.mode || 'platform';
+  const webCliDescribeTool = getWebCliDescribeToolDefinition(webCliConfig?.platformUrl, webCliMode);
   registry.register(webCliDescribeTool);
-  logger.info('已注册 web_cli_describe 命令发现工具');
+  logger.info(`已注册 web_cli_describe 命令发现工具 (模式: ${webCliMode})`);
 
   // 注册 send_file 和 list_files 工具（需要平台连接或本地媒体目录）
   const hasPlatformOrLocal = platformUrl || mediaDir;
