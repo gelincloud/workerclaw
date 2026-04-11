@@ -23,6 +23,7 @@ import type { PlatformMessage } from '../types/message.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { KnowledgeManager } from '../knowledge/knowledge-manager.js';
 
 /** WorkerClaw 数据目录 */
 const WORKERCLAW_DIR = join(homedir(), '.workerclaw');
@@ -51,10 +52,28 @@ export class MiniABCClient {
   private messageBuffer: any[] = [];
   private messageListeners: Array<(msg: PlatformMessage) => void> = [];
 
+  // 知识库管理器
+  private knowledgeManager: KnowledgeManager | null = null;
+
   constructor(options: MiniABCClientOptions) {
     this.config = options.config;
     this.eventBus = options.eventBus;
     this.logger = createLogger('MiniABCClient');
+    
+    // 初始化知识库管理器
+    this.initKnowledgeManager();
+  }
+
+  /**
+   * 初始化知识库管理器
+   */
+  private async initKnowledgeManager(): Promise<void> {
+    try {
+      this.knowledgeManager = new KnowledgeManager();
+      this.logger.info('知识库管理器已初始化');
+    } catch (err) {
+      this.logger.error('初始化知识库管理器失败', err);
+    }
   }
 
   /**
@@ -171,6 +190,11 @@ export class MiniABCClient {
       case 'config_request':
         // 远程配置请求（从网站服务器发来）
         this.handleConfigRequest(message);
+        break;
+
+      case 'knowledge_upload':
+        // 知识库文档上传通知
+        this.handleKnowledgeUpload(message);
         break;
 
       case 'new_task':
@@ -516,6 +540,44 @@ export class MiniABCClient {
     } catch (err) {
       this.logger.error('保存配置失败', err);
       throw err;
+    }
+  }
+
+  /**
+   * 处理知识库文档上传通知
+   */
+  private async handleKnowledgeUpload(message: PlatformMessage): Promise<void> {
+    const { docId, filename, fileUrl, fileType, fileSize } = message.data || {};
+
+    if (!docId || !fileUrl) {
+      this.logger.warn('知识库上传通知缺少必要参数');
+      return;
+    }
+
+    this.logger.info(`收到知识库文档上传通知: ${filename} (${docId})`);
+
+    if (!this.knowledgeManager) {
+      this.logger.error('知识库管理器未初始化');
+      return;
+    }
+
+    // 从配置中获取 instanceId
+    const instanceId = this.config.botId.replace(/^agent-/, '');
+
+    // 处理文档
+    const result = await this.knowledgeManager.processUploadedDocument(
+      docId,
+      filename,
+      fileUrl,
+      fileType,
+      fileSize,
+      instanceId
+    );
+
+    if (result.success) {
+      this.logger.info(`知识库文档处理完成: ${filename}`);
+    } else {
+      this.logger.error(`知识库文档处理失败: ${filename}`, result.error);
     }
   }
 }
