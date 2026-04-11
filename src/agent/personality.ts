@@ -134,14 +134,21 @@ export class Personality {
       sections.push(params.availableTools.map(t => `- ${t}`).join('\n'));
     }
 
-    // 8. 自定义附加提示
-    if (this.config.customSystemPrompt) {
-      sections.push('');
-      sections.push(`## 附加指引`);
-      sections.push(this.config.customSystemPrompt);
-    }
+    // 8. 自定义附加提示（已移至任务执行时注入）
+    // if (this.config.customSystemPrompt) {
+    //   sections.push('');
+    //   sections.push(`## 附加指引`);
+    //   sections.push(this.config.customSystemPrompt);
+    // }
 
     return sections.join('\n');
+  }
+
+  /**
+   * 获取用户专属知识/指令（用于任务执行时注入）
+   */
+  getCustomGuidance(): string | undefined {
+    return this.config.customSystemPrompt;
   }
 
   /**

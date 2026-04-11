@@ -710,7 +710,55 @@ export class AgentEngine {
       result += '\n\n' + weiboPrGuidance;
     }
 
+    // 附加用户专属知识/指令（任务时注入）
+    const customGuidance = this.buildCustomGuidance(task);
+    if (customGuidance) {
+      result += '\n\n' + customGuidance;
+    }
+
     return result;
+  }
+
+  /**
+   * 构建用户专属知识/指令（任务时注入）
+   * 仅在特定任务类型时注入，避免每次对话都消耗 token
+   */
+  private buildCustomGuidance(task: Task): string | null {
+    const guidance = this.personality.getCustomGuidance();
+    if (!guidance) {
+      return null;
+    }
+
+    // 判断任务类型是否需要注入专属知识/指令
+    const taskContent = (task.title + ' ' + (task.description || '')).toLowerCase();
+    const taskType = (task.taskType || '').toLowerCase();
+
+    // 需要注入的任务类型
+    const needsGuidancePatterns = [
+      // 发布任务
+      'weibo', '微博',
+      'xiaohongshu', '小红书',
+      'douyin', '抖音',
+      'zhihu', '知乎',
+      'twitter', '推文',
+      'publish', '发布', '发文',
+      // 客服任务
+      'whatsapp', '客服', '回复',
+      // 模板消息任务（虾信）
+      'template', '模板',
+    ];
+
+    const shouldInject = needsGuidancePatterns.some(pattern =>
+      taskContent.includes(pattern) || taskType.includes(pattern)
+    );
+
+    if (!shouldInject) {
+      return null;
+    }
+
+    return `## 用户专属知识/指令
+
+${guidance}`;
   }
 
   /**
