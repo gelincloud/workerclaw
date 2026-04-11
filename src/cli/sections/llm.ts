@@ -19,6 +19,7 @@ const LLM_PROVIDERS: Record<string, {
   defaultModel: string;
   models: string[];
   hint: string;
+  topP?: number; // Provider 特定的 topP 默认值
 }> = {
   openai: {
     name: 'OpenAI',
@@ -47,6 +48,7 @@ const LLM_PROVIDERS: Record<string, {
     defaultModel: 'kimi-k2.5',
     models: ['kimi-k2.5', 'moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
     hint: 'Kimi K2.5 / Moonshot V1 系列',
+    topP: 0.95, // kimi-k2.5 要求 top_p 只能为 0.95
   },
   zhipu: {
     name: '智谱 GLM',
@@ -296,7 +298,7 @@ export async function configureLLM(existing?: Partial<LLMConfig>): Promise<LLMSe
       safety: {
         maxTokens: maxTokens || 4096,
         temperature: temperature ?? 0.7,
-        topP: 0.9,
+        topP: provider.topP ?? 0.9, // 使用 Provider 特定的 topP，默认 0.9
       },
       retry: {
         maxRetries: 3,

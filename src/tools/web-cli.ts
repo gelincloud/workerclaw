@@ -897,31 +897,46 @@ async function handlePublishCommand(
     if (site === 'weibo') {
       console.log(`[handlePublishCommand] 微博发布流程开始`);
 
-      // 微博首页加载后，需要找到并点击发布按钮（+号）
-      // 微博的发布框在首页右上角，点击后展开编辑器
+      // 微博首页加载后，快捷发布弹窗可能已经自动弹出
+      // 或者需要点击发布按钮打开
 
-      // 步骤2：查找并点击发布按钮（+图标或"发布"按钮）
+      // 步骤2：检查是否已有快捷发布弹窗，或者需要打开
       console.log(`[handlePublishCommand] 步骤2: 查找发布入口`);
       const openEditorResult = await client.exec(`
         (function() {
-          var result = { foundButtons: [], clicked: false, clickedText: '' };
+          var result = { foundButtons: [], clicked: false, clickedText: '', hasOpenEditor: false };
 
-          // 微博首页的发布入口可能是：
-          // 1. 右上角的"+"按钮
-          // 2. 导航栏的"发布"按钮
-          // 3. 首页输入框区域
+          // 先检查是否已有可见的编辑器（快捷发布弹窗已打开）
+          var textareas = document.querySelectorAll('textarea');
+          var visibleEditor = null;
+          for (var i = 0; i < textareas.length; i++) {
+            var ta = textareas[i];
+            var rect = ta.getBoundingClientRect();
+            var placeholder = ta.getAttribute('placeholder') || '';
+            
+            // 检查是否是可见的内容编辑器（不是搜索框）
+            if (rect.width > 0 && rect.height > 0 && 
+                placeholder.indexOf('搜索') === -1 && placeholder.indexOf('search') === -1) {
+              visibleEditor = ta;
+              break;
+            }
+          }
 
+          if (visibleEditor) {
+            result.hasOpenEditor = true;
+            result.clickedText = '已有编辑器打开';
+            return result;
+          }
+
+          // 没有打开的编辑器，需要点击发布按钮
           var allElements = document.querySelectorAll('button, a, div, span');
           for (var i = 0; i < allElements.length; i++) {
             var el = allElements[i];
             var text = (el.innerText || el.textContent || '').trim();
-            var className = el.className || '';
 
-            // 收集可能的按钮
             if (text.length > 0 && text.length < 20) {
               result.foundButtons.push(text);
 
-              // 匹配"+"按钮或"发布"按钮
               if (text === '+' || text === '发布' || text === '写微博') {
                 el.click();
                 result.clicked = true;
@@ -930,7 +945,6 @@ async function handlePublishCommand(
               }
             }
 
-            // 检查是否有发布相关的图标按钮（通过 class 或 aria-label）
             var ariaLabel = el.getAttribute('aria-label') || '';
             if (ariaLabel.indexOf('发布') !== -1 || ariaLabel.indexOf('写微博') !== -1) {
               el.click();
@@ -940,71 +954,120 @@ async function handlePublishCommand(
             }
           }
 
-          // 尝试查找带有图标的发布按钮（svg 或 icon class）
-          var iconButtons = document.querySelectorAll('[class*="publish"], [class*="post"], [class*="write"]');
-          for (var i = 0; i < iconButtons.length; i++) {
-            iconButtons[i].click();
-            result.clicked = true;
-            result.clickedText = '[icon button]';
-            return result;
-          }
-
           return result;
         })()
-      `, { workspace }) as { foundButtons: string[]; clicked: boolean; clickedText?: string };
+      `, { workspace }) as { foundButtons: string[]; clicked: boolean; clickedText?: string; hasOpenEditor?: boolean };
       console.log(`[handlePublishCommand] 发布入口查找结果:`, openEditorResult);
 
-      // 反爬虫：随机等待
-      await randomDelay(2000, 4000);
+      // 如果是新打开的编辑器，等待加载
+      if (openEditorResult.clicked && !openEditorResult.hasOpenEditor) {
+        await randomDelay(2000, 4000);
+      }
 
       // 步骤3：填写微博内容
       console.log(`[handlePublishCommand] 步骤3: 填写微博内容`);
       const writeResult = await client.exec(`
         (function() {
-          var result = { foundEditors: [], contentFilled: false, editorType: '' };
+          var result = { foundEditors: [], contentFilled: false, editorType: '', debug: '', textareaInfo: [] };
 
           var content = \`${(content || '').replace(/`/g, '\\`').replace(/\n/g, '\\n')}\`;
+          result.debug = 'content length: ' + content.length;
 
-          // 微博编辑器可能是：
-          // 1. textarea 元素
-          // 2. contenteditable 的 div
-          // 3. 特定的编辑器 class
+          // 微博首页主发布框识别策略：
+          // 1. 优先查找 placeholder 包含"分享"的 textarea（首页主发布框）
+          // 2. 检查可见性和尺寸（主发布框通常较大）
+          // 3. 使用 React native setter 设置值
 
-          var editors = document.querySelectorAll('textarea, [contenteditable="true"], [class*="editor"], [class*="input"]');
-          result.foundEditors = Array.from(editors).map(function(e) {
-            return e.tagName + (e.className ? '.' + e.className.split(' ')[0] : '');
-          });
+          var textareas = document.querySelectorAll('textarea');
+          result.foundEditors.push('total textareas: ' + textareas.length);
 
-          for (var i = 0; i < editors.length; i++) {
-            var editor = editors[i];
+          var targetEditor = null;
+
+          for (var i = 0; i < textareas.length; i++) {
+            var ta = textareas[i];
+            var placeholder = ta.getAttribute('placeholder') || '';
+            var rect = ta.getBoundingClientRect();
+            var isVisible = rect.width > 0 && rect.height > 0 && rect.top >= 0;
+
+            result.textareaInfo.push({
+              index: i,
+              placeholder: placeholder,
+              visible: isVisible,
+              width: Math.round(rect.width),
+              height: Math.round(rect.height)
+            });
 
             // 跳过搜索框
-            var placeholder = editor.getAttribute('placeholder') || '';
-            if (placeholder.indexOf('搜索') !== -1 || placeholder.indexOf('查找') !== -1) {
+            if (placeholder.indexOf('搜索') !== -1 || placeholder.indexOf('search') !== -1) {
               continue;
             }
 
-            // 填写内容
-            if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
-              editor.value = content;
-            } else {
-              editor.textContent = content;
+            // 跳过不可见的
+            if (!isVisible) {
+              continue;
             }
 
-            // 触发事件
-            editor.dispatchEvent(new Event('input', { bubbles: true }));
-            editor.dispatchEvent(new Event('change', { bubbles: true }));
-            editor.dispatchEvent(new Event('focus', { bubbles: true }));
+            // 优先选择首页主发布框（placeholder 包含"分享"且尺寸较大）
+            if (placeholder.indexOf('分享') !== -1 && rect.width > 300) {
+              targetEditor = ta;
+              result.foundEditors.push('selected main editor: ' + placeholder.substring(0, 20));
+              break;
+            }
 
-            result.contentFilled = true;
-            result.editorType = editor.tagName;
-            break;
+            // 备选：任何可见的内容编辑器
+            if (!targetEditor && placeholder.indexOf('新鲜') !== -1) {
+              targetEditor = ta;
+              result.foundEditors.push('selected fallback editor: ' + placeholder.substring(0, 20));
+            }
+          }
+
+          // 如果找到目标编辑器，填写内容
+          if (targetEditor) {
+            // 先 focus
+            targetEditor.focus();
+
+            // 方案1：使用 React native setter 设置值
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+            nativeInputValueSetter.call(targetEditor, content);
+
+            // 触发 React 的 input 事件
+            targetEditor.dispatchEvent(new Event('input', { bubbles: true }));
+            targetEditor.dispatchEvent(new Event('change', { bubbles: true }));
+
+            // 方案2：额外触发 InputEvent（某些框架需要）
+            try {
+              var inputEvent = new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: content
+              });
+              targetEditor.dispatchEvent(inputEvent);
+            } catch (e) {
+              // 忽略不支持 InputEvent 的浏览器
+            }
+
+            // 方案3：触发 compositionend 事件（中文输入完成）
+            targetEditor.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+
+            // 设置光标位置
+            targetEditor.setSelectionRange(content.length, content.length);
+
+            // 最后再 focus 一次
+            targetEditor.focus();
+
+            // 验证值是否设置成功
+            result.debug = 'textarea value after set: ' + targetEditor.value.length + ' chars';
+            result.contentFilled = targetEditor.value === content;
+            result.editorType = 'MAIN-TEXTAREA';
+          } else {
+            result.debug = 'no suitable textarea found';
           }
 
           return result;
         })()
-      `, { workspace }) as { foundEditors: string[]; contentFilled: boolean; editorType?: string };
-      console.log(`[handlePublishCommand] 填写结果:`, writeResult);
+      `, { workspace }) as { foundEditors: string[]; contentFilled: boolean; editorType?: string; debug?: string; textareaInfo?: any[] };
+      console.log(`[handlePublishCommand] 填写结果:`, JSON.stringify(writeResult, null, 2));
 
       // 反爬虫：随机等待
       await randomDelay(2000, 4000);
@@ -1013,39 +1076,111 @@ async function handlePublishCommand(
       console.log(`[handlePublishCommand] 步骤4: 点击发布`);
       const publishResult = await client.exec(`
         (function() {
-          var result = { foundButtons: [], clicked: false, clickedText: '' };
+          var result = { foundButtons: [], clicked: false, clickedText: '', buttonInfo: [] };
 
-          // 发布按钮可能在编辑器内部或外部
-          var allElements = document.querySelectorAll('button, a, div, span');
-          for (var i = 0; i < allElements.length; i++) {
-            var el = allElements[i];
-            var text = (el.innerText || el.textContent || '').trim();
+          // 查找所有按钮并收集信息
+          var allButtons = document.querySelectorAll('button, [role="button"], a.btn, div.btn');
+          for (var i = 0; i < allButtons.length; i++) {
+            var btn = allButtons[i];
+            var text = (btn.innerText || btn.textContent || btn.value || '').trim();
+            var disabled = btn.disabled || btn.getAttribute('disabled') !== null;
+            var className = btn.className || '';
+            var rect = btn.getBoundingClientRect();
+            var isVisible = rect.width > 0 && rect.height > 0;
 
             if (text.length > 0 && text.length <= 10) {
-              result.foundButtons.push(text);
-
-              if (text === '发布' || text === '发送' || text === '发表') {
-                el.click();
-                result.clicked = true;
-                result.clickedText = text;
-                return result;
-              }
+              result.buttonInfo.push({
+                text: text,
+                disabled: disabled,
+                visible: isVisible,
+                className: className.substring(0, 50)
+              });
             }
           }
 
-          // 尝试查找提交按钮（通过 class）
-          var submitBtns = document.querySelectorAll('[class*="submit"], [class*="publish"], [class*="post"]');
-          for (var i = 0; i < submitBtns.length; i++) {
-            submitBtns[i].click();
+          // 辅助函数：模拟真实点击
+          function simulateClick(element) {
+            // 触发完整的点击事件序列
+            var rect = element.getBoundingClientRect();
+            var x = rect.left + rect.width / 2;
+            var y = rect.top + rect.height / 2;
+
+            // mousedown
+            element.dispatchEvent(new MouseEvent('mousedown', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: x,
+              clientY: y
+            }));
+
+            // mouseup
+            element.dispatchEvent(new MouseEvent('mouseup', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: x,
+              clientY: y
+            }));
+
+            // click
+            element.dispatchEvent(new MouseEvent('click', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: x,
+              clientY: y
+            }));
+
+            // 也尝试直接调用 click 方法
+            element.click();
+          }
+
+          // 查找发送按钮（优先在可见区域的）
+          var sendButtons = [];
+          for (var i = 0; i < allButtons.length; i++) {
+            var btn = allButtons[i];
+            var text = (btn.innerText || btn.textContent || '').trim();
+            var rect = btn.getBoundingClientRect();
+            var isVisible = rect.width > 0 && rect.height > 0 && rect.top >= 0;
+            var disabled = btn.disabled || btn.getAttribute('disabled') !== null;
+
+            if ((text === '发送' || text === '发布') && isVisible) {
+              sendButtons.push({
+                btn: btn,
+                disabled: disabled,
+                text: text,
+                rect: rect
+              });
+              result.foundButtons.push(text + ' @ ' + Math.round(rect.top) + 'px');
+            }
+          }
+
+          // 选择最上方的发送按钮（通常是主发布框的）
+          if (sendButtons.length > 0) {
+            // 按 top 排序，选择最上方的
+            sendButtons.sort(function(a, b) { return a.rect.top - b.rect.top; });
+            var targetBtn = sendButtons[0];
+
+            simulateClick(targetBtn.btn);
             result.clicked = true;
-            result.clickedText = '[submit class]';
+            result.clickedText = targetBtn.text + ' (top: ' + Math.round(targetBtn.rect.top) + 'px)';
+            return result;
+          }
+
+          // 没找到发送按钮，尝试其他方式
+          var weiboSendBtn = document.querySelector('[action-type="publish"], [node-type="submit"]');
+          if (weiboSendBtn) {
+            simulateClick(weiboSendBtn);
+            result.clicked = true;
+            result.clickedText = '[weibo publish btn]';
             return result;
           }
 
           return result;
         })()
-      `, { workspace }) as { foundButtons: string[]; clicked: boolean; clickedText?: string };
-      console.log(`[handlePublishCommand] 发布点击结果:`, publishResult);
+      `, { workspace }) as { foundButtons: string[]; clicked: boolean; clickedText?: string; buttonInfo?: any[] };
+      console.log(`[handlePublishCommand] 发布点击结果:`, JSON.stringify(publishResult, null, 2));
 
       // 等待发布完成
       await randomDelay(3000, 5000);

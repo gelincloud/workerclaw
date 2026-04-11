@@ -562,6 +562,7 @@ export class AgentEngine {
         maxToolCalls: this.config.security?.contentScan?.resourceExhaustion?.maxToolCallsPerTask || 20,
         botId: this.config.platform?.botId || '',
         ownerId: this.config.platform?.ownerId || null,
+        config: this.config, // 传递完整配置，让工具可以访问 platform.token 等
       };
 
       let result: { success: boolean; content: string; error?: string };
@@ -628,12 +629,33 @@ export class AgentEngine {
       },
     }));
 
-    const allTools = [...builtinForLLM, ...skillToolsForLLM];
+    // 去重：按工具名合并，优先使用内置工具
+    const seenNames = new Set<string>();
+    const allTools: any[] = [];
+    
+    // 先添加内置工具
+    for (const tool of builtinForLLM) {
+      const name = tool.function.name;
+      if (!seenNames.has(name)) {
+        seenNames.add(name);
+        allTools.push(tool);
+      }
+    }
+    
+    // 再添加技能工具（跳过已存在的）
+    for (const tool of skillToolsForLLM) {
+      const name = tool.function.name;
+      if (!seenNames.has(name)) {
+        seenNames.add(name);
+        allTools.push(tool);
+      }
+    }
 
     this.logger.debug('工具汇总', {
       builtinCount: builtinForLLM.length,
       skillCount: skillToolsForLLM.length,
-      totalCount: allTools.length,
+      uniqueCount: allTools.length,
+      duplicatesRemoved: builtinForLLM.length + skillToolsForLLM.length - allTools.length,
       permLevel,
     });
 
