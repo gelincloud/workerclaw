@@ -531,9 +531,9 @@ export class MiniABCClient {
         mkdirSync(WORKERCLAW_DIR, { recursive: true });
       }
 
-      // 读取现有配置，合并更新
+      // 读取现有配置，深度合并更新
       const existing = this.loadConfig();
-      const merged = { ...existing, ...config };
+      const merged = this.deepMerge(existing, config);
 
       writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
       this.logger.info(`配置已保存: ${CONFIG_PATH}`);
@@ -541,6 +541,25 @@ export class MiniABCClient {
       this.logger.error('保存配置失败', err);
       throw err;
     }
+  }
+
+  /**
+   * 深度合并对象（保留现有配置中未提供的字段）
+   */
+  private deepMerge(target: any, source: any): any {
+    const result = { ...target };
+    
+    for (const key of Object.keys(source)) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        // 对象类型：递归合并
+        result[key] = this.deepMerge(result[key] || {}, source[key]);
+      } else {
+        // 基本类型或数组：直接覆盖
+        result[key] = source[key];
+      }
+    }
+    
+    return result;
   }
 
   /**
