@@ -138,7 +138,18 @@ async function switchMode(existing: any, cfgPath: string): Promise<any> {
     }
   }
 
-  return { mode: newMode };
+  // 切换模式时，同步设置自动接单
+  // 私有虾：关闭自动接单；公有虾：开启自动接单
+  return {
+    mode: newMode,
+    task: {
+      ...existing?.task,
+      autoAccept: {
+        ...existing?.task?.autoAccept,
+        enabled: newMode === 'public'  // 公有虾开启，私有虾关闭
+      }
+    }
+  };
 }
 
 /**
