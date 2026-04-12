@@ -59,9 +59,11 @@ export class MiniABCClient {
     this.config = options.config;
     this.eventBus = options.eventBus;
     this.logger = createLogger('MiniABCClient');
-    
-    // 初始化知识库管理器
-    this.initKnowledgeManager();
+
+    // 初始化知识库管理器（异步，不阻塞）
+    this.initKnowledgeManager().catch(err => {
+      this.logger.error('初始化知识库管理器失败', err);
+    });
   }
 
   /**
@@ -70,6 +72,7 @@ export class MiniABCClient {
   private async initKnowledgeManager(): Promise<void> {
     try {
       this.knowledgeManager = new KnowledgeManager();
+      await this.knowledgeManager.ready();
       this.logger.info('知识库管理器已初始化');
     } catch (err) {
       this.logger.error('初始化知识库管理器失败', err);

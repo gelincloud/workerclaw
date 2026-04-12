@@ -10,7 +10,6 @@ import { RAGService } from './rag-service.js';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync } from 'node:fs';
-import Database from 'better-sqlite3';
 
 /** WorkerClaw 数据目录 */
 const WORKERCLAW_DIR = join(homedir(), '.workerclaw');
@@ -34,12 +33,20 @@ export class KnowledgeManager {
   private processor: DocumentProcessor;
   private ragService: RAGService;
   private db: any = null;
+  private initPromise: Promise<void>;
 
   constructor(embeddingConfig?: any) {
     this.logger = createLogger('KnowledgeManager');
     this.processor = new DocumentProcessor();
     this.ragService = new RAGService(embeddingConfig);
-    this.initDatabase();
+    this.initPromise = this.initDatabase();
+  }
+
+  /**
+   * 等待初始化完成
+   */
+  async ready(): Promise<void> {
+    await this.initPromise;
   }
 
   /**
@@ -113,6 +120,9 @@ export class KnowledgeManager {
     fileSize: number,
     instanceId: string
   ): Promise<{ success: boolean; error?: string }> {
+    // 等待初始化完成
+    await this.initPromise;
+
     try {
       this.logger.info(`开始处理文档: ${filename} (${docId})`);
 
