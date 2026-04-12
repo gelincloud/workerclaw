@@ -569,9 +569,9 @@ export class MiniABCClient {
    * 处理知识库文档上传通知
    */
   private async handleKnowledgeUpload(message: PlatformMessage): Promise<void> {
-    const { docId, filename, fileUrl, fileType, fileSize } = message.data || {};
+    const { docId, filename, fileUrl, fileType, fileSize, instanceId } = message.data || {};
 
-    if (!docId || !fileUrl) {
+    if (!docId || !fileUrl || !instanceId) {
       this.logger.warn('知识库上传通知缺少必要参数');
       return;
     }
@@ -583,9 +583,6 @@ export class MiniABCClient {
       return;
     }
 
-    // 从配置中获取 instanceId
-    const instanceId = this.config.botId.replace(/^agent-/, '');
-
     // 处理文档
     const result = await this.knowledgeManager.processUploadedDocument(
       docId,
@@ -596,10 +593,49 @@ export class MiniABCClient {
       instanceId
     );
 
+    // 回调网站更新文档状态
+    await this.updateDocumentStatus(instanceId, docId, result);
+
     if (result.success) {
       this.logger.info(`知识库文档处理完成: ${filename}`);
     } else {
       this.logger.error(`知识库文档处理失败: ${filename}`, result.error);
+    }
+  }
+
+  /**
+   * 回调网站更新文档状态
+   */
+  private async updateDocumentStatus(
+    instanceId: string,
+    docId: string,
+    result: { success: boolean; error?: string; chunkCount?: number }
+  ): Promise<void> {
+    try {
+      const status = result.success ? 'ready' : 'failed';
+      const chunkCount = (result as any).chunkCount || 0;
+
+      // 获取网站 API 地址
+      const websiteUrl = process.env.WEBSITE_URL || 'https://openclaw.net';
+
+      const response = await fetch(`${websiteUrl}/api/console/instances/${instanceId}/knowledge/${docId}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          status,
+          chunkCount,
+        }),
+      });
+
+      if (!response.ok) {
+        this.logger.error(`更新文档状态失败: ${response.status}`);
+      } else {
+        this.logger.info(`已更新文档状态: ${docId} -> ${status}`);
+      }
+    } catch (err: any) {
+      this.logger.error('回调网站更新状态失败', err);
     }
   }
 }

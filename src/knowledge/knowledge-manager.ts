@@ -119,7 +119,7 @@ export class KnowledgeManager {
     fileType: string,
     fileSize: number,
     instanceId: string
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; chunkCount?: number }> {
     // 等待初始化完成
     await this.initPromise;
 
@@ -153,7 +153,7 @@ export class KnowledgeManager {
 
       this.logger.info(`文档处理完成: ${filename}, ${result.chunks.length} 个分段`);
 
-      return { success: true };
+      return { success: true, chunkCount: result.chunks.length };
     } catch (err: any) {
       this.logger.error('处理文档失败', err);
       this.updateDocumentStatus(docId, 'failed');
